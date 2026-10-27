@@ -1,2 +1,2 @@
 # NetRunner
-This Repo is for a Computer Network project
+This repo is for a Computer Network project
