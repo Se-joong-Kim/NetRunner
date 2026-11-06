@@ -1,0 +1,8 @@
+{
+  "scenario_id": "FI-01",
+  "target_url": "http://shop.lab/",
+  "faults": [{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.99"}}],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "첫 통합 시연 1: DNS가 예전 IP(10.20.0.99, 지금은 비어 있는 주소)를 반환"
+}

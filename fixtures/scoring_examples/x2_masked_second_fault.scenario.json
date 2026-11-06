@@ -1,0 +1,11 @@
+{
+  "scenario_id": "EX-02",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.99"}},
+    {"id": "T2", "params": {"port": 80}}
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "breaker",
+  "note": "채점 예시: DNS가 엉뚱한 IP를 주면 정상 서버의 연결 거부(T2)는 클라이언트에서 볼 수 없다 → T2는 채점 제외"
+}

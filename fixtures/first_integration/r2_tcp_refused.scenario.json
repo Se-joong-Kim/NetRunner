@@ -1,0 +1,8 @@
+{
+  "scenario_id": "FI-02",
+  "target_url": "http://shop.lab/",
+  "faults": [{"id": "T2", "params": {"port": 80}}],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "첫 통합 시연 2: DNS는 정상 IP, 웹 서버 80번 포트가 RST로 연결 거부"
+}
