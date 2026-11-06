@@ -1,4 +1,9 @@
-"""채점(설계안 9.3절 지표). 정답과 진단을 대조하고, 인용된 근거가 실제로 있고 결론을 지지하는지 따로 본다."""
+"""채점(설계안 9.3절 지표).
+
+정답과 진단을 대조하고, 인용된 근거가 실제로 있고 결론을 지지하는지
+따로 본다.
+"""
+
 from __future__ import annotations
 
 import re
@@ -13,14 +18,19 @@ VERDICT_BY_KIND = {"full": "correct", "stage": "cause_wrong", "any": "stage_wron
 
 @dataclass
 class FaultScore:
+    """장애 하나의 판정 결과."""
+
     id: str
     label: str
-    verdict: str  # correct | cause_wrong | stage_wrong | missed | masked
+    # correct | cause_wrong | stage_wrong | missed | masked
+    verdict: str
     finding: int | None = None  # 짝지어진 finding의 번호
 
 
 @dataclass
 class EvidenceCheck:
+    """인용 근거 하나의 존재·지지 판정."""
+
     finding: int
     ref: str
     claim: str
@@ -32,6 +42,8 @@ class EvidenceCheck:
 
 @dataclass
 class Score:
+    """라운드 하나의 채점 결과 전체."""
+
     faults: list[FaultScore]
     false_positives: list[str]
     evidence: list[EvidenceCheck]
@@ -52,19 +64,25 @@ def _signal_patterns(fault: Fault, params: dict) -> list[str]:
     def fill(m: re.Match) -> str:
         key = m.group(1)
         return re.escape(str(params[key])) if key in params else m.group(0)
+
     return [re.sub(r"\{(\w+)\}", fill, s) for s in fault.signals]
 
 
-def _match(findings: list[Finding], faults: list[Fault], observable: list[bool]) -> dict[int, tuple[int, str]]:
-    """장애마다 finding 하나를 짝짓는다: 완전 일치 → 단계만 일치 → (관측 가능한 장애에 한해) 아무 남은 진단.
+def _match(
+    findings: list[Finding], faults: list[Fault], observable: list[bool]
+) -> dict[int, tuple[int, str]]:
+    """장애마다 finding 하나를 짝짓는다.
 
-    마지막 단계의 짝은 단계를 잘못 짚은 진단이다. 반환: {장애 번호: (finding 번호, "full"|"stage"|"any")}
+    순서는 완전 일치 → 단계만 일치 → (관측 가능한 장애에 한해) 아무
+    남은 진단이다. 마지막 단계의 짝은 단계를 잘못 짚은 진단이다.
+    반환: {장애 번호: (finding 번호, "full"|"stage"|"any")}
     """
     pairs: dict[int, tuple[int, str]] = {}
     used: set[int] = set()
     for kind in ("full", "stage", "any"):
         for fi, fault in enumerate(faults):
-            if fi in pairs or kind == "any" and not observable[fi]:
+            # 관측 불가 장애는 어떤 단계에서도 짝을 짓지 않는다(그 진단은 오탐이 된다).
+            if fi in pairs or not observable[fi]:
                 continue
             for ni, n in enumerate(findings):
                 if ni in used:
@@ -79,8 +97,10 @@ def _match(findings: list[Finding], faults: list[Fault], observable: list[bool])
     return pairs
 
 
-def _judge_ref(ref: str, probes: dict[str, Probe], patterns: list[str] | None) -> tuple[str, bool, bool | None, str]:
-    """인용 하나 → (probe_id, 존재, 지지, 이유)"""
+def _judge_ref(
+    ref: str, probes: dict[str, Probe], patterns: list[str] | None
+) -> tuple[str, bool, bool | None, str]:
+    """인용 하나 → (probe_id, 존재, 지지, 이유)."""
     m = EVIDENCE_REF.match(ref.strip())
     if not m:
         return "", False, False, "참조 형식 오류"
@@ -98,25 +118,45 @@ def _judge_ref(ref: str, probes: dict[str, Probe], patterns: list[str] | None) -
     if patterns is None:
         return pid, True, None, "목록에 없는 원인 — 수동 확인"
     hit = next((p for p in patterns if re.search(p, probe.output)), None)
-    return (pid, True, True, f"신호 일치: {hit}") if hit else (pid, True, None, "자동 판정 불가 — 수동 확인")
+    return (
+        (pid, True, True, f"신호 일치: {hit}")
+        if hit
+        else (pid, True, None, "자동 판정 불가 — 수동 확인")
+    )
 
 
-def _check_evidence(ni: int, finding: Finding, probes: dict[str, Probe], patterns: list[str] | None) -> list[EvidenceCheck]:
+def _check_evidence(
+    ni: int, finding: Finding, probes: dict[str, Probe], patterns: list[str] | None
+) -> list[EvidenceCheck]:
     if not finding.evidence:
         return [EvidenceCheck(ni, "", "", "", False, False, "근거 없음")]
-    return [EvidenceCheck(ni, ev.ref, ev.claim, *_judge_ref(ev.ref, probes, patterns)) for ev in finding.evidence]
+    return [
+        EvidenceCheck(ni, ev.ref, ev.claim, *_judge_ref(ev.ref, probes, patterns))
+        for ev in finding.evidence
+    ]
 
 
-def score(scenario: Scenario, observable: list[bool], diagnosis: Diagnosis, elapsed_s: float,
-          limits: Limits | None = None) -> Score:
-    """elapsed_s는 심판이 잰 진단 시간이다. Diagnoser의 자체 보고값(diagnosis.elapsed_s)은 쓰지 않는다."""
+def score(
+    scenario: Scenario,
+    observable: list[bool],
+    diagnosis: Diagnosis,
+    elapsed_s: float,
+    limits: Limits | None = None,
+) -> Score:
+    """정답과 진단을 대조해 라운드 하나를 채점한다.
+
+    elapsed_s는 심판이 잰 진단 시간이다. Diagnoser의 자체 보고값
+    (diagnosis.elapsed_s)은 쓰지 않는다.
+    """
     faults = [FAULTS[s.id] for s in scenario.faults]
     pairs = _match(diagnosis.findings, faults, observable)
 
     results = []
-    for fi, (fault, seen) in enumerate(zip(faults, observable)):
+    for fi, (fault, seen) in enumerate(zip(faults, observable, strict=True)):
         ni, kind = pairs.get(fi, (None, None))
-        results.append(FaultScore(fault.id, fault.label, VERDICT_BY_KIND[kind] if seen else "masked", ni))
+        results.append(
+            FaultScore(fault.id, fault.label, VERDICT_BY_KIND[kind] if seen else "masked", ni)
+        )
 
     # 완전·단계 일치로 짝지어지지 않은 진단은 오탐이다(단계를 잘못 짚은 진단 포함).
     explained = {ni for ni, kind in pairs.values() if kind != "any"}
