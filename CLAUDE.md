@@ -28,13 +28,13 @@ uv run ruff format
 
 ## 구조
 
-한 라운드: 검증 → 정상 확인 → 주입·재현 확인 → 진단 → 채점·정답 공개 → 복구·정상화 확인 → JSONL 기록. 이 순서는 `referee.py`가 진행하고, 자세한 규칙과 JSON 형식은 `docs/interfaces.md`(계약 v0.1)가 기준이다.
+한 라운드: 검증 → 정상 확인 → 주입·재현 확인 → 진단 → 채점·정답 공개 → 복구·정상화 확인 → JSONL 기록. 이 순서는 `referee.py`가 진행하고, 자세한 규칙과 JSON 형식은 `docs/interfaces.md`가 기준이다.
 
 - `contracts.py`: 모듈 사이에 오가는 모든 데이터 클래스. 각 `from_dict`가 필수 키와 타입을 검사하고 `ContractError`를 낸다.
 - `breaker.py`, `lab.py`, `diagnoser.py`: 담당자가 구현할 경계. 각각 `typing.Protocol`(`Breaker`, `Lab`, `Diagnoser`)과 그 자리를 대신하는 스탠드인(`FixedBreaker`, `MockLab`, `ReplayDiagnoser`)이 같이 있다. 실제 구현이 생기면 `Referee(lab=..., diagnoser=...)`에 같은 형태로 꽂는다.
 - `faults.py`: 장애 16종의 단일 출처. 정답 라벨, 매개변수 범위, 관측 차단 여부, 근거 지지 판정용 신호를 가진다. 검증, 채점, 보고서가 모두 여기서 읽는다.
 - `validate.py`(제안 검사), `scoring.py`(채점), `report.py`(지표와 HTML): `referee.py`가 조립한다.
-- `config/lab.json`: 실험망 주소. 현재 값은 임시이고 실험망 담당이 compose 확정 후 교체한다.
+- `config/lab.json`: 실험망 주소. 실험망 담당이 관리한다.
 - `fixtures/first_integration`(시연 두 라운드)과 `fixtures/scoring_examples`(채점 사례)는 `<이름>.scenario.json`과 `<이름>.diagnosis.json` 짝으로 이루어지며, `demo`와 테스트가 이 이름 규칙에 의존한다.
 
 ### 지켜야 할 경계
@@ -80,17 +80,10 @@ uv run ruff format
 
 ## GitHub 협업
 
-저장소: `Se-joong-Kim/NetRunner`, 기본 브랜치 `main`. 팀원마다 저장소에 이미 있는 자기 담당 브랜치 하나에서 작업하고, PR로 `main`에 합친다. 현재 `main`에는 브랜치 보호 규칙이 없어서 직접 푸시가 막혀 있지 않다. 그래도 직접 푸시하지 않고 PR로만 합친다.
+저장소: `Se-joong-Kim/NetRunner`, 기본 브랜치 `main`. 팀원마다 자기 담당 브랜치 하나에서 작업하고, PR로 `main`에 합친다. `main`에는 직접 푸시하지 않는다.
 
 - **브랜치**: 각자 담당 브랜치에서만 작업한다. 작업마다 새 브랜치(번호나 주제를 붙인 이름 포함)를 만들지 않는다. 담당 브랜치가 뒤처졌으면 `main`을 가져와 맞추고, 강제 푸시로 기록을 바꾸지 않는다. 한 PR에는 한 주제만 담고, 담당 모듈과 무관한 변경은 섞지 않는다. 오래 두지 말고 짧게 끝내 합친다.
-- **PR**: 작게 올려 빨리 리뷰받는다. 작업 중 피드백이 필요하면 draft로 올린다. 본문은 첫 PR(#1)처럼 한국어로 쓰고, 먼저 읽을 것, 담당별 할 일, 확인 방법, 알아 둘 점 순으로 적는다.
-- **계약 변경은 합의 후**: `docs/interfaces.md`, `contracts.py`, `faults.py`를 바꾸는 PR은 영향을 받는 담당자(Breaker 김승범, 실험망 양시찬, Diagnoser 이현섭)를 리뷰어로 지정하고 승인을 받은 뒤 합친다. 심판 쪽(`referee.py`, `validate.py`, `scoring.py`, `report.py`)은 팀장(김세중)이 본다.
-- **합치기 전 확인**: `uv run pytest`가 통과해야 한다. 아직 CI(`.github/workflows`)가 없으므로 로컬에서 직접 돌린다.
+- **PR**: 작게 올려 빨리 리뷰받는다. 작업 중 피드백이 필요하면 draft로 올린다. 본문은 한국어로 쓰고, 먼저 읽을 것, 담당별 할 일, 확인 방법, 알아 둘 점 순으로 적는다.
+- **계약 변경은 합의 후**: `docs/interfaces.md`, `contracts.py`, `faults.py`를 바꾸는 PR은 영향을 받는 담당자를 리뷰어로 지정하고 승인을 받은 뒤 합친다. 담당자는 README 표를 따른다. 심판 쪽(`referee.py`, `validate.py`, `scoring.py`, `report.py`)은 팀장이 본다.
+- **합치기 전 확인**: `uv run pytest`와 `uv run ruff check`가 통과해야 한다.
 - **리뷰 요청과 승인은 사람이 한다**: PR 병합, 브랜치 삭제, 강제 푸시는 사용자가 시킬 때만 한다.
-
-### 아직 없는 설정 (도입을 제안할 수 있는 것)
-
-- `.github/CODEOWNERS`: 파일 경로별로 담당자를 자동 리뷰어로 지정한다. 대상 브랜치(`main`)에 있어야 동작하고, draft PR에는 요청이 가지 않는다.
-- 브랜치 보호 규칙의 "Require review from Code Owners"와 필수 승인 수, 통과해야 할 검사. 저장소 관리자 권한이 필요하다(현재 계정은 push 권한뿐).
-- `.github/pull_request_template.md`: PR 본문 형식을 고정한다.
-- `.github/workflows/`의 pytest 실행.
