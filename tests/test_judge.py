@@ -6,6 +6,7 @@ import pytest
 from netrunner.breaker import FixedBreaker
 from netrunner.contracts import ContractError, Diagnosis, Limits, Scenario, read_json
 from netrunner.diagnoser import ReplayDiagnoser
+from netrunner.faults import FAULTS
 from netrunner.lab import MockLab
 from netrunner.referee import Referee, feedback_for
 from netrunner.report import render_html, summarize
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FI = ROOT / "fixtures" / "first_integration"
 EX = ROOT / "fixtures" / "scoring_examples"
 LAB = LabInfo.load(ROOT / "config" / "lab.json")
+LAB.enabled_faults = list(FAULTS)  # 심판 규칙은 아직 실험망에 구현되지 않은 장애도 검사한다.
 
 # 자주 쓰는 고정 입력. 테스트에서 바꿀 때는 dict(R2_DIAG, **patch)처럼 복사한다.
 R1_SC, R1_DIAG = read_json(FI / "r1_dns_old_ip.scenario.json"), read_json(FI / "r1_dns_old_ip.diagnosis.json")
@@ -94,6 +96,7 @@ def test_malformed_target_url_is_rejected_not_crash():
     v = validate(scenario(target_url="http://shop.lab:99999/"), LAB)
     assert not v.ok and "포트 형식" in v.errors[0]
     assert not validate(scenario(target_url="ftp://shop.lab/"), LAB).ok
+    assert not validate(scenario(target_url="http://shop.lab:0/"), LAB).ok
 
 
 def test_dns_wrong_ip_masks_later_tcp_fault_but_not_path_fault():

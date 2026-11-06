@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
 from .contracts import Scenario, read_json
 from .diagnoser import ReplayDiagnoser
+from .docker_lab import DockerLab
 from .lab import MockLab
 from .referee import Referee
 from .report import format_table, load_records, render_html, summarize
@@ -67,6 +70,55 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_lab_check(args) -> int:
+    """실제 실험망만 검사한다. 저장된 진단 결과를 실제 진단으로 기록하지 않는다."""
+    info = LabInfo.load(args.lab)
+    lab = DockerLab(args.lab)
+    files = sorted(Path(args.dir).glob("*.scenario.json"))
+    if not files or args.repeat < 1:
+        print("시나리오 파일이 없거나 반복 횟수가 1보다 작음", file=sys.stderr)
+        return 1
+    scenarios = [Scenario.from_dict(read_json(p)) for p in files]
+    for scenario in scenarios:
+        result = validate(scenario, info)
+        if not result.ok or len(scenario.faults) != 1:
+            print(f"{scenario.scenario_id}: 시나리오 오류 {result.errors} (단일 장애만 지원)", file=sys.stderr)
+            return 1
+    output = Path(args.out)
+    output.mkdir(parents=True, exist_ok=True)
+    path = output / f"lab-check-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.jsonl"
+    for _ in range(args.repeat):
+        for scenario in scenarios:
+            steps = {}
+            try:
+                initial = lab.health_check(scenario.target_url)
+                if not initial.ok:
+                    steps["health_check_initial"] = asdict(initial)
+                    before = lab.reset()
+                    steps["reset_before"] = asdict(before)
+                    if before.ok:
+                        initial = lab.health_check(scenario.target_url)
+                steps["health_check"] = asdict(initial)
+                if initial.ok:
+                    injection = lab.inject(scenario.faults[0])
+                    steps["inject"] = asdict(injection)
+                    if injection.ok:
+                        steps["verify_symptom"] = asdict(lab.verify_symptom(scenario))
+            finally:
+                steps["reset"] = asdict(lab.reset())
+                steps["health_check_after"] = asdict(lab.health_check(scenario.target_url))
+                with path.open("a", encoding="utf-8") as fp:
+                    fp.write(json.dumps({"scenario_id": scenario.scenario_id, "steps": steps}, ensure_ascii=False) + "\n")
+            ok = all(steps.get(name, {}).get("ok", False) for name in
+                     ("health_check", "inject", "verify_symptom", "reset", "health_check_after"))
+            print(f"{scenario.scenario_id}: {'성공' if ok else '실패'}")
+            if not ok:
+                print(f"기록: {path}")
+                return 1
+    print(f"기록: {path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="netrunner", description="NetRunner 심판·통합 도구")
     ap.add_argument("--lab", default=str(DEFAULT_LAB), help="실험망 주소 정보 JSON")
@@ -85,6 +137,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("records")
     p.add_argument("--html")
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("lab-check", help="실제 실험망의 장애 재현과 복구 확인")
+    p.add_argument("--dir", default=str(ROOT / "fixtures" / "first_integration"))
+    p.add_argument("--out", default=str(ROOT / "runs"))
+    p.add_argument("--repeat", type=int, default=1)
+    p.set_defaults(func=cmd_lab_check)
 
     args = ap.parse_args(argv)
     return args.func(args)

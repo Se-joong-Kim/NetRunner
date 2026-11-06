@@ -48,7 +48,7 @@ python -m pytest tests                          # 심판 테스트
 
 ## 2. 심판 ↔ 실험망: `Lab` 인터페이스
 
-실험망 담당은 `netrunner/lab.py`의 `Lab`을 만족하는 클래스를 만든다. 지금은 `MockLab`이 그 자리를 대신한다.
+`netrunner/lab.py`의 `Lab`을 만족하는 `netrunner/docker_lab.py`의 `DockerLab`은 D2와 T2를 지원한다. `MockLab`은 모의 실행에 사용한다.
 
 | 함수 | 하는 일 | 반환 |
 |---|---|---|
@@ -59,7 +59,9 @@ python -m pytest tests                          # 심판 테스트
 
 `LabResult`는 `{"ok": bool, "detail": str, "observations": {...}}` 형태이며, 측정값과 캡처 파일 경로는 `observations`에 넣는다.
 
-실험망 주소는 `config/lab.json`에 있다. **지금 값은 임시 값이다.** compose가 확정되면 도메인, 웹 서버 IP, 대역, 구현된 장애 목록(`enabled_faults`)을 교체한다.
+실험망 주소와 구현된 장애 목록(`enabled_faults`)은 `config/lab.json`에 있다. 클라이언트 대역은 `10.21.0.0/24`, 서버 대역은 `10.20.0.0/24`다. 첫 구현은 단일 장애와 HTTP 80번 포트만 재현한다. 실행 방법과 기록 위치는 README를 참고한다.
+
+`DockerLab.verify_symptom`의 `observations.capture`에는 원본 `stdout`, 패킷 번호를 표시한 `output`, 총 패킷 수 `packets`, 파일 경로 `file`을 넣는다. `lab-check`는 실험망 검증 전용이며 이 값을 Diagnoser의 Probe로 자동 제출하지 않는다. 캡처 종료를 확인하지 못하면 초기화 성공으로 처리하지 않는다.
 
 ## 3. 심판 → Diagnoser: `RoundBrief`
 

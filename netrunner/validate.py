@@ -111,7 +111,9 @@ def validate(scenario: Scenario, lab: LabInfo) -> ValidationResult:
     # 매개변수 검사가 scenario.port를 쓰므로 URL 형식부터 확인한다.
     u = scenario.url
     try:
-        u.port
+        if u.port == 0:
+            r.errors.append("target_url: 포트는 1~65535여야 함")
+            return r
     except ValueError as e:
         r.errors.append(f"target_url: 포트 형식 오류 ({e})")
         return r
