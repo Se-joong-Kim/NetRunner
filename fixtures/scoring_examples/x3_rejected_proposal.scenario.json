@@ -1,0 +1,8 @@
+{
+  "scenario_id": "EX-03",
+  "target_url": "http://shop.lab/",
+  "faults": [{"id": "N2", "params": {"loss_pct": 50}}],
+  "complaint": "DNS가 이상한지 페이지가 자꾸 끊겨요.",
+  "origin": "breaker",
+  "note": "검증 예시: 손실 30% 초과, 증상 설명에 원인 단서(DNS) → 심판이 거부"
+}

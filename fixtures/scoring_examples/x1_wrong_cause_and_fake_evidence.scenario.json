@@ -1,0 +1,8 @@
+{
+  "scenario_id": "EX-01",
+  "target_url": "http://shop.lab/",
+  "faults": [{"id": "T2", "params": {"port": 80}}],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "breaker",
+  "note": "채점 예시: 원인을 틀리고(DROP으로 오진), 없는 패킷 번호를 인용하고, 근거 없는 오탐을 낸 진단"
+}

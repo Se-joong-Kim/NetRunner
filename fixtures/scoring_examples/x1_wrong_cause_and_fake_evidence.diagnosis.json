@@ -1,0 +1,19 @@
+{
+  "round_id": "(심판이 채움)",
+  "model": "fixture",
+  "method": "C",
+  "findings": [
+    {"stage": "TCP", "cause": "무응답 차단",
+     "evidence": [{"ref": "pcap:p3#40", "claim": "SYN 재전송 반복"}, {"ref": "probe:p1", "claim": "연결 실패"}]},
+    {"stage": "DNS", "cause": "지연", "evidence": []}
+  ],
+  "trace": [
+    {"probe_id": "p1", "tool": "curl", "args": {"url": "http://shop.lab/"},
+     "output": "curl: (7) Failed to connect to shop.lab port 80 after 2 ms: Connection refused", "elapsed_ms": 4},
+    {"probe_id": "p3", "tool": "tcpdump", "args": {"filter": "tcp port 80"},
+     "output": "#1 10.20.0.2 > 10.20.0.10 [S]\n#2 10.20.0.10 > 10.20.0.2 [R.]", "elapsed_ms": 1100, "packets": 2}
+  ],
+  "llm_calls": 5,
+  "tokens": 4100,
+  "elapsed_s": 21.0
+}
