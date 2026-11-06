@@ -137,9 +137,9 @@ def _check_param(fault: Fault, name: str, value, scenario: Scenario, lab: LabInf
             return f"{where}: 대상 도메인과 같으면 이름 불일치가 생기지 않음"
     elif spec.kind == "ip":
         # ip_address는 정수도 받으므로 문자열만 허용한다(계약: IP 문자열).
+        if not isinstance(value, str):
+            return f"{where}: IP 형식이 아님 ({value})"
         try:
-            if not isinstance(value, str):
-                raise ValueError(value)
             ip = ipaddress.ip_address(value)
         except ValueError:
             return f"{where}: IP 형식이 아님 ({value})"
