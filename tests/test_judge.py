@@ -426,3 +426,30 @@ def test_diagnoser_failures_count_against_that_model():
     good = ReplayDiagnoser([dict(R2_DIAG, model="glm-4.5")])
     rows = summarize([run_one(diag=good)[0], run_one(diag=Boom())[0]])
     assert len(rows) == 1 and rows[0]["rounds"] == "1/2 (50%)"
+
+
+# ------------------------------------------------- 근거 자동 판정(신호)
+
+
+@pytest.mark.parametrize(
+    "fault_id, params, output, expected",
+    [
+        # 주입 지연 이상의 ping 값은 자동 지지, 정상 ping은 지지 안 함
+        ("N1", {"delay_ms": 20}, "64 bytes: icmp_seq=1 time=25.3 ms", True),
+        ("N1", {"delay_ms": 200}, "64 bytes: icmp_seq=1 time=412 ms", True),
+        ("N1", {"delay_ms": 200}, "64 bytes: icmp_seq=1 time=0.42 ms", False),
+        # 0이 아닌 손실률만 지지
+        ("N2", {"loss_pct": 10}, "10% packet loss", True),
+        ("N2", {"loss_pct": 1}, "0% packet loss", False),
+        # 만료 판정: -checkend 출력은 "will not expire"와 구분된다
+        ("S1", {}, "Certificate will expire", True),
+        ("S1", {}, "Certificate will not expire", False),
+        ("S1", {}, "SSL certificate problem: certificate has expired", True),
+    ],
+)
+def test_signal_auto_judgement(fault_id, params, output, expected):
+    from netrunner.faults import FAULTS
+    from netrunner.scoring import _signal_hit, _signal_patterns
+
+    patterns = _signal_patterns(FAULTS[fault_id], params)
+    assert any(_signal_hit(p, floor, output) for p, floor in patterns) is expected

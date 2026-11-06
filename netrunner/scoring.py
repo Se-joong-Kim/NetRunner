@@ -60,12 +60,30 @@ class Score:
     limit_violations: list[str] = field(default_factory=list)
 
 
-def _signal_patterns(fault: Fault, params: dict) -> list[str]:
+def _signal_patterns(fault: Fault, params: dict) -> list[tuple[str, float | None]]:
+    """장애의 신호를 (정규식, 최소값) 목록으로 바꾼다.
+
+    최소값은 fault.value_param에 해당하는 매개변수 값이다. 매개변수가
+    없으면 None이고 수치 조건은 없다. value_param을 쓰는 장애의 신호는
+    반드시 (?P<v>...) 그룹을 가져야 한다(없으면 _signal_hit가 실패한다).
+    """
+
     def fill(m: re.Match) -> str:
         key = m.group(1)
         return re.escape(str(params[key])) if key in params else m.group(0)
 
-    return [re.sub(r"\{(\w+)\}", fill, s) for s in fault.signals]
+    floor = float(params[fault.value_param]) if fault.value_param in params else None
+    return [(re.sub(r"\{(\w+)\}", fill, s), floor) for s in fault.signals]
+
+
+def _signal_hit(pattern: str, floor: float | None, text: str) -> bool:
+    """신호가 출력에 있는지 본다.
+
+    최소값이 있으면 정규식의 (?P<v>) 값이 그 이상인 일치만 인정한다.
+    판정은 정규식 일치와 수치 비교뿐이다. 의미 판단은 하지 않으므로,
+    자동 지지는 "신호가 보인다"까지만 보장한다는 점을 기억한다.
+    """
+    return any(floor is None or float(m.group("v")) >= floor for m in re.finditer(pattern, text))
 
 
 def _match(
@@ -98,7 +116,7 @@ def _match(
 
 
 def _judge_ref(
-    ref: str, probes: dict[str, Probe], patterns: list[str] | None
+    ref: str, probes: dict[str, Probe], patterns: list[tuple[str, float | None]] | None
 ) -> tuple[str, bool, bool | None, str]:
     """인용 하나 → (probe_id, 존재, 지지, 이유)."""
     m = EVIDENCE_REF.match(ref.strip())
@@ -117,7 +135,7 @@ def _judge_ref(
             return pid, False, False, f"패킷 번호 범위 밖 (1~{probe.packets})"
     if patterns is None:
         return pid, True, None, "목록에 없는 원인 — 수동 확인"
-    hit = next((p for p in patterns if re.search(p, probe.output)), None)
+    hit = next((p for p, floor in patterns if _signal_hit(p, floor, probe.output)), None)
     return (
         (pid, True, True, f"신호 일치: {hit}")
         if hit

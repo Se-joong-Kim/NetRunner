@@ -54,6 +54,8 @@ class Fault:
     layer: int = 0
     # 인용된 근거 출력에서 찾을 정규식. {param}은 해당 매개변수 값으로 바뀐다.
     signals: tuple[str, ...] = ()
+    # 신호에 (?P<v>...) 그룹이 있을 때, 그 값이 이 매개변수 값 이상이어야 근거로 본다.
+    value_param: str | None = None
     cause_aliases: tuple[str, ...] = ()
     # TLS 핸드셰이크나 SNI(ClientHello)를 거쳐야 보이는 장애. http URL에서는 관측되지 않는다.
     https_only: bool = False
@@ -160,8 +162,20 @@ FAULTS: dict[str, Fault] = {
                 "jitter_ms": Param("int", required=False, min=0, max=500),
             },
             layer=2,
-            # 정상 ping도 time=을 찍으므로 값이 큰 경우(100ms 이상)만 근거로 본다.
-            signals=(r"time=\d{3,}",),
+            # 자동 판정 조건: 출력의 time= 값 >= 주입한 delay_ms.
+            # 가정
+            #  - 주입 지연이 왕복 시간(RTT)에 그대로 더해진다고 본다.
+            #    netem이 한쪽 방향에만 걸려 있어도 RTT >= delay_ms다.
+            #  - 측정 도구가 ping이어야 한다("time=12.3 ms" 형식).
+            # 한계
+            #  - jitter_ms가 있으면 개별 값이 delay_ms보다 작을 수
+            #    있다. 그 인용은 자동 지지가 안 되고 수동 확인이 된다.
+            #  - 정상 RTT가 주입 지연보다 크면 정상 출력이 지지로
+            #    잘못 판정될 수 있다. 실험망 기본 RTT는 1ms 안팎이라
+            #    최소 delay 20ms에서도 여유가 있지만, 망이 바뀌면 다시 본다.
+            #  - mtr, traceroute 같은 다른 도구의 지연 표기는 잡지 않는다.
+            signals=(r"time=(?P<v>\d+(?:\.\d+)?)",),
+            value_param="delay_ms",
             cause_aliases=("latency", "delay", "jitter", "지터"),
         ),
         Fault(
@@ -172,7 +186,16 @@ FAULTS: dict[str, Fault] = {
             "tc netem loss",
             {"loss_pct": Param("int", min=1, max=30)},
             layer=2,
-            # "0% packet loss"는 정상 출력이므로 0이 아닌 손실률만 본다.
+            # 자동 판정 신호는 세 가지다.
+            #  - "N% packet loss": ping 요약. 0이 아닌 손실률만 인정한다
+            #    ("0% packet loss"는 정상 출력).
+            #  - "retransmi", "재전송": TCP 재전송 표기. 정상 출력에도
+            #    드물게 나올 수 있다.
+            # 한계
+            #  - mtr의 "Loss%" 열, ss 통계 등은 잡지 않는다. 그 인용은
+            #    수동 확인이 된다.
+            #  - 손실률 값은 주입값과 비교하지 않는다. 0이 아니면 지지로
+            #    보므로, 주입 손실과 무관한 손실도 지지될 수 있다.
             signals=(
                 r"(?!0+(?:\.0+)?% packet loss)\d+(?:\.\d+)?% packet loss",
                 r"[Rr]etransmi",
@@ -211,8 +234,21 @@ FAULTS: dict[str, Fault] = {
             {},
             layer=5,
             https_only=True,
-            # notAfter=는 정상 인증서 출력에도 나오므로 신호로 쓰지 않는다.
-            signals=(r"certificate has expired", r"expired"),
+            # 자동 판정 신호는 세 가지다.
+            #  - "certificate has expired": curl, openssl verify 등 검증
+            #    오류 문구.
+            #  - "Certificate will expire": openssl x509 -checkend 0 출력.
+            #    만료됐을 때만 나오고 "will not expire"와는 다르다.
+            #  - "expired": 위 두 문구의 변형을 넓게 잡는다.
+            # 가정
+            #  - 진단자가 -checkend 0(기준 시각 0초)으로 실행했을 때만
+            #    "will expire"가 나온다. 다른 기간을 주면 아직 유효한
+            #    인증서도 "will expire"가 나와 잘못 지지된다.
+            # 한계
+            #  - notAfter= 날짜는 정상 인증서에도 나오므로 신호로 쓰지
+            #    않는다. 날짜만 보여 준 인용은 수동 확인이 된다.
+            #  - "expired"는 정상 출력의 다른 문맥에도 나올 수 있다.
+            signals=(r"certificate has expired", r"Certificate will expire", r"expired"),
             cause_aliases=("expired", "expired certificate", "만료"),
         ),
         Fault(
