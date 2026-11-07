@@ -18,31 +18,52 @@ EX = ROOT / "fixtures" / "scoring_examples"
 LAB = LabInfo.load(ROOT / "config" / "lab.json")
 
 # 자주 쓰는 고정 입력. 테스트에서 바꿀 때는 dict(R2_DIAG, **patch)처럼 복사한다.
-R1_SC, R1_DIAG = read_json(FI / "r1_dns_old_ip.scenario.json"), read_json(FI / "r1_dns_old_ip.diagnosis.json")
-R2_SC, R2_DIAG = read_json(FI / "r2_tcp_refused.scenario.json"), read_json(FI / "r2_tcp_refused.diagnosis.json")
+R1_SC, R1_DIAG = (
+    read_json(FI / "r1_dns_old_ip.scenario.json"),
+    read_json(FI / "r1_dns_old_ip.diagnosis.json"),
+)
+R2_SC, R2_DIAG = (
+    read_json(FI / "r2_tcp_refused.scenario.json"),
+    read_json(FI / "r2_tcp_refused.diagnosis.json"),
+)
 X1_SC = read_json(EX / "x1_wrong_cause_and_fake_evidence.scenario.json")
 X1_DIAG = read_json(EX / "x1_wrong_cause_and_fake_evidence.diagnosis.json")
-X2_SC, X2_DIAG = read_json(EX / "x2_masked_second_fault.scenario.json"), read_json(EX / "x2_masked_second_fault.diagnosis.json")
+X2_SC, X2_DIAG = (
+    read_json(EX / "x2_masked_second_fault.scenario.json"),
+    read_json(EX / "x2_masked_second_fault.diagnosis.json"),
+)
 X3_SC = read_json(EX / "x3_rejected_proposal.scenario.json")
 
 
 def scenario(**kw) -> Scenario:
-    d = {"scenario_id": "T", "target_url": "http://shop.lab/", "complaint": "사이트가 열리지 않아요.",
-         "faults": [{"id": "T2", "params": {"port": 80}}]}
+    d = {
+        "scenario_id": "T",
+        "target_url": "http://shop.lab/",
+        "complaint": "사이트가 열리지 않아요.",
+        "faults": [{"id": "T2", "params": {"port": 80}}],
+    }
     d.update(kw)
     return Scenario.from_dict(d)
 
 
 def diagnosis(findings, trace=None) -> Diagnosis:
-    return Diagnosis.from_dict({"round_id": "r", "model": "m", "method": "C", "findings": findings,
-                                "trace": trace or []})
+    return Diagnosis.from_dict(
+        {"round_id": "r", "model": "m", "method": "C", "findings": findings, "trace": trace or []}
+    )
 
 
 def score_of(sc: dict, diag: dict, observable=(True,), **kw):
-    return score(Scenario.from_dict(sc), list(observable), Diagnosis.from_dict(diag), kw.pop("elapsed_s", 1.0), **kw)
+    return score(
+        Scenario.from_dict(sc),
+        list(observable),
+        Diagnosis.from_dict(diag),
+        kw.pop("elapsed_s", 1.0),
+        **kw,
+    )
 
 
 # ---------------------------------------------------------------- 검증
+
 
 def test_fixture_scenarios_pass_validation():
     for sc in (R1_SC, R2_SC):
@@ -56,29 +77,47 @@ def test_rejected_proposal_reports_range_and_clue():
     assert any("단서" in e for e in v.errors)
 
 
-@pytest.mark.parametrize("text", ["IP가 이상해요", "인증서 경고가 떠요", "mtu 문제 같아요", "포트가 막힌 듯",
-                                  "it redirects forever", "certificates warning", "couldn't resolve it",
-                                  "resolving takes ages", "some ports closed", "packets vanish"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "IP가 이상해요",
+        "인증서 경고가 떠요",
+        "mtu 문제 같아요",
+        "포트가 막힌 듯",
+        "it redirects forever",
+        "certificates warning",
+        "couldn't resolve it",
+        "resolving takes ages",
+        "some ports closed",
+        "packets vanish",
+    ],
+)
 def test_clue_words_detected_with_particles_and_inflections(text):
     assert find_clues(text)
 
 
-@pytest.mark.parametrize("text", ["사이트가 열리지 않아요.", "한참 있다가 열리기 시작해요", "ZIP 파일 다운로드가 멈춰요"])
+@pytest.mark.parametrize(
+    "text",
+    ["사이트가 열리지 않아요.", "한참 있다가 열리기 시작해요", "ZIP 파일 다운로드가 멈춰요"],
+)
 def test_plain_complaints_have_no_clues(text):
     assert not find_clues(text)
 
 
-@pytest.mark.parametrize("faults, needle", [
-    ([{"id": "T2", "params": {"port": 443}}], "포트"),
-    ([{"id": "D1", "params": {"domain": "news.lab"}}], "도메인"),
-    ([{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.10"}}], "정상 서버"),
-    ([{"id": "D2", "params": {"domain": "shop.lab", "ip": "8.8.8.8"}}], "대역"),
-    ([{"id": "T1", "params": {"port": 80}}, {"id": "T2", "params": {"port": 80}}], "함께"),
-    ([{"id": "X9"}], "허용 목록"),
-    ([{"id": "N1", "params": {"delay_ms": 100, "bogus": 1}}], "정의되지"),
-    ([{"id": "N1", "params": {}}], "필수"),
-    ([], "1~3"),
-])
+@pytest.mark.parametrize(
+    "faults, needle",
+    [
+        ([{"id": "T2", "params": {"port": 443}}], "포트"),
+        ([{"id": "D1", "params": {"domain": "news.lab"}}], "도메인"),
+        ([{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.10"}}], "정상 서버"),
+        ([{"id": "D2", "params": {"domain": "shop.lab", "ip": "8.8.8.8"}}], "대역"),
+        ([{"id": "T1", "params": {"port": 80}}, {"id": "T2", "params": {"port": 80}}], "함께"),
+        ([{"id": "X9"}], "허용 목록"),
+        ([{"id": "N1", "params": {"delay_ms": 100, "bogus": 1}}], "정의되지"),
+        ([{"id": "N1", "params": {}}], "필수"),
+        ([], "1~3"),
+    ],
+)
 def test_validation_rules(faults, needle):
     v = validate(scenario(faults=faults), LAB)
     assert not v.ok and any(needle in e for e in v.errors), v.errors
@@ -92,25 +131,75 @@ def test_fault_not_yet_enabled_in_lab_is_rejected():
 
 def test_malformed_target_url_is_rejected_not_crash():
     v = validate(scenario(target_url="http://shop.lab:99999/"), LAB)
-    assert not v.ok and "포트 형식" in v.errors[0]
+    assert not v.ok and "형식 오류" in v.errors[0]
+    v = validate(scenario(target_url="http://[::1/"), LAB)
+    assert not v.ok and "형식 오류" in v.errors[0]
     assert not validate(scenario(target_url="ftp://shop.lab/"), LAB).ok
 
 
+def test_integer_ip_param_is_rejected():
+    spec = {"id": "D2", "params": {"domain": "shop.lab", "ip": 167772170}}
+    v = validate(scenario(faults=[spec]), LAB)
+    assert any("IP 형식이 아님" in e for e in v.errors)
+
+
+def test_tls_and_sni_faults_require_https():
+    v = validate(scenario(target_url="http://shop.lab/", faults=[{"id": "S1"}]), LAB)
+    assert any("https" in e for e in v.errors)
+    v = validate(scenario(target_url="https://shop.lab/", faults=[{"id": "S1"}]), LAB)
+    assert v.ok
+
+
+def test_masked_fault_named_in_finding_is_false_positive():
+    # D3가 T1을 가린다. T1을 짚은 진단은 짝이 없어 오탐이어야 한다.
+    sc = {
+        "scenario_id": "T",
+        "target_url": "http://shop.lab/",
+        "complaint": "사이트가 열리지 않아요.",
+        "faults": [{"id": "D3", "params": {"domain": "shop.lab"}}, {"id": "T1"}],
+    }
+    s = score_of(
+        sc,
+        {
+            "round_id": "r",
+            "model": "m",
+            "method": "C",
+            "findings": [{"stage": "TCP", "cause": "무응답 차단"}],
+        },
+        observable=(True, False),
+    )
+    assert s.faults[1].verdict == "masked"
+    assert s.false_positives == ["TCP / 무응답 차단"]
+
+
 def test_dns_wrong_ip_masks_later_tcp_fault_but_not_path_fault():
-    v = validate(scenario(faults=[{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.99"}},
-                                  {"id": "T2", "params": {"port": 80}},
-                                  {"id": "N1", "params": {"delay_ms": 200}}]), LAB)
+    v = validate(
+        scenario(
+            faults=[
+                {"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.99"}},
+                {"id": "T2", "params": {"port": 80}},
+                {"id": "N1", "params": {"delay_ms": 200}},
+            ]
+        ),
+        LAB,
+    )
     assert v.ok
     assert v.observable == [True, False, True]
 
 
 def test_sni_block_masks_certificate_fault():
-    v = validate(scenario(target_url="https://shop.lab/",
-                          faults=[{"id": "B1", "params": {"domain": "shop.lab"}}, {"id": "S1"}]), LAB)
+    v = validate(
+        scenario(
+            target_url="https://shop.lab/",
+            faults=[{"id": "B1", "params": {"domain": "shop.lab"}}, {"id": "S1"}],
+        ),
+        LAB,
+    )
     assert v.observable == [True, False]
 
 
 # ---------------------------------------------------------------- 채점
+
 
 def test_first_integration_round1_scores_correct():
     s = score_of(R1_SC, R1_DIAG)
@@ -146,7 +235,12 @@ def test_stage_aliases_and_wrong_stage():
 
 
 def test_one_wrong_stage_finding_marks_only_one_fault_stage_wrong():
-    sc = scenario(faults=[{"id": "D4", "params": {"delay_ms": 800}}, {"id": "N1", "params": {"delay_ms": 200}}])
+    sc = scenario(
+        faults=[
+            {"id": "D4", "params": {"delay_ms": 800}},
+            {"id": "N1", "params": {"delay_ms": 200}},
+        ]
+    )
     s = score(sc, [True, True], diagnosis([{"stage": "TCP", "cause": "연결 거부"}]), 1.0)
     assert sorted(f.verdict for f in s.faults) == ["missed", "stage_wrong"]
 
@@ -162,11 +256,14 @@ def test_time_limit_uses_judge_measurement_not_self_report():
     assert any("900s" in v for v in s.limit_violations) and s.elapsed_s == 900
 
 
-@pytest.mark.parametrize("patch", [
-    {"trace": [{"probe_id": "p1", "tool": "tcpdump", "output": "x", "packets": "12"}]},
-    {"findings": [{"stage": None, "cause": "x"}]},
-    {"findings": [{"stage": "TCP", "cause": "x", "evidence": [{"ref": 3}]}]},
-])
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"trace": [{"probe_id": "p1", "tool": "tcpdump", "output": "x", "packets": "12"}]},
+        {"findings": [{"stage": None, "cause": "x"}]},
+        {"findings": [{"stage": "TCP", "cause": "x", "evidence": [{"ref": 3}]}]},
+    ],
+)
 def test_malformed_diagnosis_is_contract_error(patch):
     with pytest.raises(ContractError):
         Diagnosis.from_dict(dict(R2_DIAG, **patch))
@@ -175,6 +272,7 @@ def test_malformed_diagnosis_is_contract_error(patch):
 
 
 # ---------------------------------------------------------------- 심판 라운드
+
 
 class Boom:
     model, method = "glm-4.5", "C"
@@ -205,10 +303,13 @@ def test_round_hides_answer_from_diagnoser():
     assert lab.calls[-2:] == ["reset", "health_check"]
 
 
-@pytest.mark.parametrize("lab, reason", [
-    (MockLab(fail_inject={"T2"}), "주입 실패"),
-    (MockLab(no_symptom=True), "증상 재현 실패"),
-])
+@pytest.mark.parametrize(
+    "lab, reason",
+    [
+        (MockLab(fail_inject={"T2"}), "주입 실패"),
+        (MockLab(no_symptom=True), "증상 재현 실패"),
+    ],
+)
 def test_invalid_rounds_still_reset_lab(lab, reason):
     rec, lab = run_one(lab=lab)
     assert rec["status"] == "invalid" and reason in rec["invalid_reason"]
@@ -242,7 +343,8 @@ def test_rejected_proposal_never_touches_lab():
 def test_match_retries_rejected_proposals_and_stops_on_dirty_lab():
     good = Scenario.from_dict(X1_SC)
     recs = Referee(MockLab(), ReplayDiagnoser([X1_DIAG]), LAB).run_match(
-        FixedBreaker([Scenario.from_dict(X3_SC), good]), rounds=1)
+        FixedBreaker([Scenario.from_dict(X3_SC), good]), rounds=1
+    )
     assert [r["status"] for r in recs] == ["rejected", "scored"]
 
     dirty = Referee(MockLab(broken_reset=True), ReplayDiagnoser([]), LAB)
@@ -252,7 +354,9 @@ def test_match_retries_rejected_proposals_and_stops_on_dirty_lab():
 
 def test_breaker_cannot_label_its_rounds_as_fixed_set():
     sc = Scenario.from_dict(dict(X1_SC, origin="fixed"))
-    recs = Referee(MockLab(), ReplayDiagnoser([X1_DIAG]), LAB).run_match(FixedBreaker([sc]), rounds=1)
+    recs = Referee(MockLab(), ReplayDiagnoser([X1_DIAG]), LAB).run_match(
+        FixedBreaker([sc]), rounds=1
+    )
     assert recs[0]["origin"] == "breaker" and feedback_for(recs[0]) is not None
 
 
@@ -261,7 +365,11 @@ def test_feedback_only_for_breaker_rounds():
     assert feedback_for(rec) is None  # 고정 세트는 Breaker 입력에서 제외
     rec, _ = run_one(diag=ReplayDiagnoser([X1_DIAG]), sc=X1_SC)
     fb = feedback_for(rec)
-    assert fb.valid and fb.outcomes[0].verdict == "cause_wrong" and fb.false_positives == ["DNS / 지연"]
+    assert (
+        fb.valid
+        and fb.outcomes[0].verdict == "cause_wrong"
+        and fb.false_positives == ["DNS / 지연"]
+    )
     rec, _ = run_one(sc=X3_SC)
     fb = feedback_for(rec)
     assert not fb.valid and "loss_pct" in fb.invalid_reason
@@ -269,12 +377,15 @@ def test_feedback_only_for_breaker_rounds():
 
 def test_records_are_appended_as_jsonl(tmp_path):
     out = tmp_path / "rounds.jsonl"
-    Referee(MockLab(), ReplayDiagnoser([R2_DIAG]), LAB, records_path=out).run_round(Scenario.from_dict(R2_SC))
+    Referee(MockLab(), ReplayDiagnoser([R2_DIAG]), LAB, records_path=out).run_round(
+        Scenario.from_dict(R2_SC)
+    )
     rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
     assert rows[0]["score"]["cause_correct"] == 1
 
 
 # ---------------------------------------------------------------- 결과
+
 
 def test_summary_and_html():
     recs = [run_one()[0], run_one(lab=MockLab(no_symptom=True))[0], run_one(sc=X3_SC)[0]]
@@ -282,12 +393,32 @@ def test_summary_and_html():
     assert len(rows) == 1  # 거부된 제안은 모델 행에 들어가지 않는다
     assert rows[0]["rounds"] == "1/2 (50%)" and rows[0]["cause_acc"] == "1/1 (100%)"
     page = render_html(recs, rows)
-    assert "Connection refused" in page and "증상 재현 실패" in page and "실험망 사용 안 함" in page
+    assert (
+        "Connection refused" in page and "증상 재현 실패" in page and "실험망 사용 안 함" in page
+    )
 
 
 def test_cited_probe_output_embedded_once():
-    page = render_html([run_one(diag=ReplayDiagnoser([dict(R2_DIAG, findings=[
-        {"stage": "TCP", "cause": "연결 거부", "evidence": ["probe:p1", "probe:p1", "pcap:p3#1", "pcap:p3#2"]}])]))[0]])
+    page = render_html(
+        [
+            run_one(
+                diag=ReplayDiagnoser(
+                    [
+                        dict(
+                            R2_DIAG,
+                            findings=[
+                                {
+                                    "stage": "TCP",
+                                    "cause": "연결 거부",
+                                    "evidence": ["probe:p1", "probe:p1", "pcap:p3#1", "pcap:p3#2"],
+                                }
+                            ],
+                        )
+                    ]
+                )
+            )[0]
+        ]
+    )
     assert page.count("after 2 ms: Connection refused") == 1
 
 
@@ -295,3 +426,30 @@ def test_diagnoser_failures_count_against_that_model():
     good = ReplayDiagnoser([dict(R2_DIAG, model="glm-4.5")])
     rows = summarize([run_one(diag=good)[0], run_one(diag=Boom())[0]])
     assert len(rows) == 1 and rows[0]["rounds"] == "1/2 (50%)"
+
+
+# ------------------------------------------------- 근거 자동 판정(신호)
+
+
+@pytest.mark.parametrize(
+    "fault_id, params, output, expected",
+    [
+        # 주입 지연 이상의 ping 값은 자동 지지, 정상 ping은 지지 안 함
+        ("N1", {"delay_ms": 20}, "64 bytes: icmp_seq=1 time=25.3 ms", True),
+        ("N1", {"delay_ms": 200}, "64 bytes: icmp_seq=1 time=412 ms", True),
+        ("N1", {"delay_ms": 200}, "64 bytes: icmp_seq=1 time=0.42 ms", False),
+        # 0이 아닌 손실률만 지지
+        ("N2", {"loss_pct": 10}, "10% packet loss", True),
+        ("N2", {"loss_pct": 1}, "0% packet loss", False),
+        # 만료 판정: -checkend 출력은 "will not expire"와 구분된다
+        ("S1", {}, "Certificate will expire", True),
+        ("S1", {}, "Certificate will not expire", False),
+        ("S1", {}, "SSL certificate problem: certificate has expired", True),
+    ],
+)
+def test_signal_auto_judgement(fault_id, params, output, expected):
+    from netrunner.faults import FAULTS
+    from netrunner.scoring import _signal_hit, _signal_patterns
+
+    patterns = _signal_patterns(FAULTS[fault_id], params)
+    assert any(_signal_hit(p, floor, output) for p, floor in patterns) is expected

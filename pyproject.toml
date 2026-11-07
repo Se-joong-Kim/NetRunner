@@ -1,0 +1,40 @@
+[project]
+name = "netrunner"
+version = "0.1.0"
+description = "Breaker vs Diagnoser 대결 실험의 심판·통합 패키지"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+netrunner = "netrunner.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff>=0.17.4",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 99
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "D"]
+ignore = ["D105", "D107"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"

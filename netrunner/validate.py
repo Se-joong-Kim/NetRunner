@@ -1,4 +1,5 @@
 """심판의 시나리오 검사(설계안 8장의 규칙). Breaker는 제안만 하고, 허용 여부는 여기서 정한다."""
+
 from __future__ import annotations
 
 import ipaddress
@@ -11,16 +12,51 @@ from .faults import FAULTS, Fault
 
 # 증상 설명에 들어가면 원인이 드러나는 단어(설계안 8장: "MTU", "인증서" 같은 단어는 거부).
 CLUE_WORDS = (
-    "DNS", "TCP", "UDP", "TLS", "SSL", "HTTP", "MTU", "RST", "SNI", "ICMP", "NXDOMAIN", "IP",
-    "port", "packet", "certificate", "redirect", "firewall", "iptables", "netem", "resolv",
-    "502", "301", "SYN",
-    "포트", "인증서", "패킷", "손실", "재전송", "리다이렉트", "방화벽", "차단", "라우터",
-    "네임서버", "이름 해석", "도메인 해석", "핸드셰이크",
+    "DNS",
+    "TCP",
+    "UDP",
+    "TLS",
+    "SSL",
+    "HTTP",
+    "MTU",
+    "RST",
+    "SNI",
+    "ICMP",
+    "NXDOMAIN",
+    "IP",
+    "port",
+    "packet",
+    "certificate",
+    "redirect",
+    "firewall",
+    "iptables",
+    "netem",
+    "resolv",
+    "502",
+    "301",
+    "SYN",
+    "포트",
+    "인증서",
+    "패킷",
+    "손실",
+    "재전송",
+    "리다이렉트",
+    "방화벽",
+    "차단",
+    "라우터",
+    "네임서버",
+    "이름 해석",
+    "도메인 해석",
+    "핸드셰이크",
 )
 # 한국어 조사가 바로 붙어도("IP가") 잡히도록 \b 대신 영숫자 경계만 본다.
 # 영어 활용형(redirects, resolved, certificates)도 잡도록 접미사를 허용한다.
-_ASCII_CLUES = re.compile(r"(?<![A-Za-z0-9])((?:" + "|".join(re.escape(w) for w in CLUE_WORDS if w.isascii())
-                          + r")(?:e|s|es|d|ed|ing)?)(?![A-Za-z0-9])", re.IGNORECASE)
+_ASCII_CLUES = re.compile(
+    r"(?<![A-Za-z0-9])((?:"
+    + "|".join(re.escape(w) for w in CLUE_WORDS if w.isascii())
+    + r")(?:e|s|es|d|ed|ing)?)(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
 _KOREAN_CLUES = tuple(w for w in CLUE_WORDS if not w.isascii())
 
 # 한 라운드에 같이 걸면 서로를 덮어써서 정답이 모호해지는 묶음.
@@ -38,13 +74,15 @@ MAX_COMPLAINT_LEN = 300
 @dataclass
 class LabInfo:
     """실험망 담당이 확정하는 주소 정보. config/lab.json에서 읽는다."""
+
     domains: list[str]
     web_ip: str
     subnet: str
     enabled_faults: list[str] = field(default_factory=lambda: sorted(FAULTS))
 
     @classmethod
-    def load(cls, path: str | Path) -> "LabInfo":
+    def load(cls, path: str | Path) -> LabInfo:
+        """config/lab.json 형식의 파일에서 실험망 정보를 읽는다."""
         d = read_json(path)
         extra = {"enabled_faults": d["enabled_faults"]} if "enabled_faults" in d else {}
         return cls(domains=d["domains"], web_ip=d["web_ip"], subnet=d["subnet"], **extra)
@@ -52,17 +90,22 @@ class LabInfo:
 
 @dataclass
 class ValidationResult:
+    """시나리오 검사 결과: 오류(거부 사유)와 주의 사항."""
+
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    # 시나리오의 faults 순서와 같은 길이. False면 선행 장애에 가려 클라이언트에서 볼 수 없다.
+    # 시나리오의 faults 순서와 같은 길이.
+    # False면 선행 장애에 가려 클라이언트에서 볼 수 없다.
     observable: list[bool] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
+        """오류가 하나도 없으면 True."""
         return not self.errors
 
 
 def find_clues(text: str) -> list[str]:
+    """설명문에 들어 있는 원인 단서 단어를 모두 찾는다."""
     found = [m.group(0) for m in _ASCII_CLUES.finditer(text)]
     found += [w for w in _KOREAN_CLUES if w in text]
     return found
@@ -73,7 +116,10 @@ def observability(faults: list[Fault]) -> list[bool]:
 
     경로 장애는 ping·tracepath로 서버 IP에 직접 확인할 수 있으므로 가려지지 않는다.
     """
-    return [f.stage == "경로" or not any(g.blocking and g.layer < f.layer for g in faults) for f in faults]
+    return [
+        f.stage == "경로" or not any(g.blocking and g.layer < f.layer for g in faults)
+        for f in faults
+    ]
 
 
 def _check_param(fault: Fault, name: str, value, scenario: Scenario, lab: LabInfo) -> str | None:
@@ -83,10 +129,16 @@ def _check_param(fault: Fault, name: str, value, scenario: Scenario, lab: LabInf
         if value not in lab.domains:
             return f"{where}: 실험망 도메인이 아님 ({value})"
         if name == "domain" and value != scenario.domain:
-            return f"{where}: 대상 URL의 도메인({scenario.domain})과 달라 클라이언트 증상으로 나타나지 않음"
+            return (
+                f"{where}: 대상 URL의 도메인({scenario.domain})과 달라 "
+                "클라이언트 증상으로 나타나지 않음"
+            )
         if name == "cert_domain" and value == scenario.domain:
             return f"{where}: 대상 도메인과 같으면 이름 불일치가 생기지 않음"
     elif spec.kind == "ip":
+        # ip_address는 정수도 받으므로 문자열만 허용한다(계약: IP 문자열).
+        if not isinstance(value, str):
+            return f"{where}: IP 형식이 아님 ({value})"
         try:
             ip = ipaddress.ip_address(value)
         except ValueError:
@@ -106,18 +158,22 @@ def _check_param(fault: Fault, name: str, value, scenario: Scenario, lab: LabInf
 
 
 def validate(scenario: Scenario, lab: LabInfo) -> ValidationResult:
+    """시나리오 하나를 설계안 8장 규칙으로 검사한다."""
     r = ValidationResult()
 
     # 매개변수 검사가 scenario.port를 쓰므로 URL 형식부터 확인한다.
-    u = scenario.url
     try:
-        u.port
+        u = scenario.url
+        _ = u.port
     except ValueError as e:
-        r.errors.append(f"target_url: 포트 형식 오류 ({e})")
+        r.errors.append(f"target_url: URL 형식 오류 ({e})")
         return r
     if u.scheme not in ("http", "https"):
         r.errors.append(f"target_url: http/https가 아님 ({scenario.target_url})")
         return r
+    https_needed = [s.id for s in scenario.faults if s.id in FAULTS and FAULTS[s.id].https_only]
+    if https_needed and u.scheme != "https":
+        r.errors.append(f"target_url: {https_needed}은(는) https URL에서만 관측됨")
 
     if scenario.domain not in lab.domains:
         r.errors.append(f"target_url: 실험망 도메인이 아님 ({scenario.domain})")
@@ -165,7 +221,7 @@ def validate(scenario: Scenario, lab: LabInfo) -> ValidationResult:
 
     if len(known) == len(scenario.faults):
         r.observable = observability(known)
-        for f, seen in zip(known, r.observable):
+        for f, seen in zip(known, r.observable, strict=True):
             if not seen:
                 r.warnings.append(f"{f.id}({f.label}): 선행 장애에 가려 관측 불가 — 채점에서 제외")
         if known and not any(r.observable):

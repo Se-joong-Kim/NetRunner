@@ -12,8 +12,11 @@ Breaker(장애를 심는 LLM 에이전트)와 Diagnoser(증상만 듣고 원인�
 
 모듈 사이 데이터 형식과 장애 목록: [docs/interfaces.md](docs/interfaces.md)
 
+기획 문서(설계안, 역할 분담과 개발 계획, 수업자료 링크): [docs/planning/](docs/planning/)
+
 ```
-python -m netrunner validate fixtures/first_integration/*.scenario.json
-python -m netrunner demo        # 첫 통합 시연 두 라운드를 모의 실험망으로 실행 → runs/에 기록과 결과 화면
-python -m pytest tests
+uv sync
+uv run netrunner validate fixtures/first_integration/*.scenario.json
+uv run netrunner demo        # 첫 통합 시연 두 라운드를 모의 실험망으로 실행 → runs/에 기록과 결과 화면
+uv run pytest
 ```

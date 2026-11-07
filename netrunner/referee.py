@@ -2,6 +2,7 @@
 
 검증 → 정상 확인 → 주입 → 재현 확인 → 진단 → 채점·정답 공개 → 복구·정상화 확인 → 기록
 """
+
 from __future__ import annotations
 
 import json
@@ -13,7 +14,15 @@ from pathlib import Path
 
 from . import SCHEMA_VERSION
 from .breaker import Breaker
-from .contracts import BreakerFeedback, ContractError, FaultOutcome, LabResult, Limits, RoundBrief, Scenario
+from .contracts import (
+    BreakerFeedback,
+    ContractError,
+    FaultOutcome,
+    LabResult,
+    Limits,
+    RoundBrief,
+    Scenario,
+)
 from .diagnoser import Diagnoser
 from .lab import Lab
 from .scoring import score
@@ -21,8 +30,16 @@ from .validate import LabInfo, validate
 
 
 class Referee:
-    def __init__(self, lab: Lab, diagnoser: Diagnoser, lab_info: LabInfo,
-                 limits: Limits | None = None, records_path: str | Path | None = None):
+    """라운드를 순서대로 돌리고 결과를 기록하는 심판."""
+
+    def __init__(
+        self,
+        lab: Lab,
+        diagnoser: Diagnoser,
+        lab_info: LabInfo,
+        limits: Limits | None = None,
+        records_path: str | Path | None = None,
+    ):
         self.lab = lab
         self.diagnoser = diagnoser
         self.lab_info = lab_info
@@ -30,6 +47,7 @@ class Referee:
         self.records_path = Path(records_path) if records_path else None
 
     def run_round(self, scenario: Scenario) -> dict:
+        """시나리오 하나를 검증부터 기록까지 한 라운드로 돌린다."""
         round_id = secrets.token_hex(4)  # 시나리오 ID와 무관한 중립 ID
         # 읽는 쪽이 키 유무를 따로 판단하지 않도록 모든 키를 처음에 둔다.
         rec: dict = {
@@ -39,7 +57,8 @@ class Referee:
             "origin": scenario.origin,
             "model": self.diagnoser.model,
             "method": self.diagnoser.method,
-            "status": "running",  # scored | invalid | rejected(검증 거부, 실험망 미사용)
+            # scored | invalid | rejected(검증 거부, 실험망 미사용)
+            "status": "running",
             "invalid_reason": "",
             "validation": None,
             "lab_log": [],
@@ -70,7 +89,11 @@ class Referee:
         try:
             # 1. 검증. 실험망을 건드리기 전에 한다(검증 안 된 URL로 접속하지 않는다).
             v = validate(scenario, self.lab_info)
-            rec["validation"] = {"errors": v.errors, "warnings": v.warnings, "observable": v.observable}
+            rec["validation"] = {
+                "errors": v.errors,
+                "warnings": v.warnings,
+                "observable": v.observable,
+            }
             if not v.ok:
                 return end("rejected", "시나리오 검증 실패")
 
@@ -115,7 +138,10 @@ class Referee:
             self._append(rec)
 
     def run_match(self, breaker: Breaker, rounds: int, max_retries: int = 3) -> list[dict]:
-        """Breaker 제안 → 라운드 → 피드백을 반복한다. 검증에서 거부되면 같은 라운드를 다시 제안받는다."""
+        """Breaker 제안 → 라운드 → 피드백을 반복한다.
+
+        검증에서 거부되면 같은 라운드를 다시 제안받는다.
+        """
         records: list[dict] = []
         history: list[BreakerFeedback] = []
         for _ in range(rounds):
@@ -145,8 +171,13 @@ def feedback_for(rec: dict) -> BreakerFeedback | None:
     if rec["origin"] == "fixed":
         return None
     answer = Scenario.from_dict(rec["answer"])
-    fb = BreakerFeedback(scenario_id=answer.scenario_id, faults=answer.faults, complaint=answer.complaint,
-                         valid=rec["status"] == "scored", invalid_reason=rec["invalid_reason"])
+    fb = BreakerFeedback(
+        scenario_id=answer.scenario_id,
+        faults=answer.faults,
+        complaint=answer.complaint,
+        valid=rec["status"] == "scored",
+        invalid_reason=rec["invalid_reason"],
+    )
     if rec["status"] == "rejected":
         fb.invalid_reason += ": " + "; ".join(rec["validation"]["errors"])
     if rec["score"]:
