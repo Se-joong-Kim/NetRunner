@@ -94,7 +94,10 @@ def cmd_lab_check(args) -> int:
     for scenario in scenarios:
         result = validate(scenario, info)
         if not result.ok or len(scenario.faults) != 1:
-            print(f"{scenario.scenario_id}: 시나리오 오류 {result.errors} (단일 장애만 지원)", file=sys.stderr)
+            print(
+                f"{scenario.scenario_id}: 시나리오 오류 {result.errors} (단일 장애만 지원)",
+                file=sys.stderr,
+            )
             return 1
     output = Path(args.out)
     output.mkdir(parents=True, exist_ok=True)
@@ -120,9 +123,23 @@ def cmd_lab_check(args) -> int:
                 steps["reset"] = asdict(lab.reset())
                 steps["health_check_after"] = asdict(lab.health_check(scenario.target_url))
                 with path.open("a", encoding="utf-8") as fp:
-                    fp.write(json.dumps({"scenario_id": scenario.scenario_id, "steps": steps}, ensure_ascii=False) + "\n")
-            ok = all(steps.get(name, {}).get("ok", False) for name in
-                     ("health_check", "inject", "verify_symptom", "reset", "health_check_after"))
+                    fp.write(
+                        json.dumps(
+                            {"scenario_id": scenario.scenario_id, "steps": steps},
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+            ok = all(
+                steps.get(name, {}).get("ok", False)
+                for name in (
+                    "health_check",
+                    "inject",
+                    "verify_symptom",
+                    "reset",
+                    "health_check_after",
+                )
+            )
             print(f"{scenario.scenario_id}: {'성공' if ok else '실패'}")
             if not ok:
                 print(f"기록: {path}")

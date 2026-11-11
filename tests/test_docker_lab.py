@@ -1,15 +1,15 @@
-import os
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from netrunner.contracts import FaultSpec, LabResult, Scenario, read_json
 from netrunner.__main__ import cmd_lab_check
+from netrunner.contracts import FaultSpec, LabResult, Scenario, read_json
 from netrunner.diagnoser import ReplayDiagnoser
-from netrunner.docker_lab import DockerLab, ROOT
+from netrunner.docker_lab import ROOT, DockerLab
 from netrunner.referee import Referee
 from netrunner.validate import LabInfo
 
@@ -36,7 +36,10 @@ def test_reset_attempts_firewall_even_if_dns_fails(monkeypatch):
 
 def test_timeout_preserves_partial_output(monkeypatch):
     def timeout(*args, **kwargs):
-        raise subprocess.TimeoutExpired(args[0], 1, output=b"partial output", stderr=b"partial error")
+        raise subprocess.TimeoutExpired(
+            args[0], 1, output=b"partial output", stderr=b"partial error"
+        )
+
     monkeypatch.setattr(subprocess, "run", timeout)
     result = DockerLab()._run("client", "curl")
     assert result["exit_code"] is None
@@ -54,11 +57,13 @@ def test_dns_waits_for_expected_answers(monkeypatch):
 def test_capture_numbers_packets_and_always_cleans_up(monkeypatch):
     lab = DockerLab()
     calls = []
+
     def run(service, *args, **kwargs):
         calls.append(args)
         if args[:2] == ("sh", "-c"):
             return {"exit_code": 0, "stdout": "    1 packet one\n    2 packet two\n", "stderr": ""}
         return {"exit_code": 0}
+
     monkeypatch.setattr(lab, "_run", run)
     result, _ = lab._capture("http://shop.lab/")
     assert result["packets"] == 2
@@ -71,17 +76,23 @@ def test_lab_check_recovers_dirty_start(monkeypatch, tmp_path):
     scenario_dir.mkdir()
     source = ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json"
     (scenario_dir / source.name).write_text(source.read_text())
+
     class FakeLab:
         def __init__(self, config):
             self.checks = iter([False, True, True])
+
         def health_check(self, url):
             return LabResult(next(self.checks))
+
         def inject(self, fault):
             return LabResult(True)
+
         def verify_symptom(self, scenario):
             return LabResult(True)
+
         def reset(self):
             return LabResult(True)
+
     monkeypatch.setattr("netrunner.__main__.DockerLab", FakeLab)
     args = SimpleNamespace(lab=ROOT / "config/lab.json", dir=scenario_dir, out=tmp_path, repeat=1)
     assert cmd_lab_check(args) == 0
@@ -124,10 +135,12 @@ def test_referee_runs_real_lab_with_replayed_diagnosis():
 def test_capture_timeout_stops_remote_process(monkeypatch):
     lab = DockerLab()
     original = lab._run
+
     def run(service, *args, **kwargs):
         if args[:2] == ("sh", "-c") and "setsid" in args[2]:
             kwargs["timeout"] = 1
         return original(service, *args, **kwargs)
+
     monkeypatch.setattr(lab, "_run", run)
     result, _ = lab._capture("http://shop.lab/")
     assert result["exit_code"] is None
@@ -142,14 +155,20 @@ def test_capture_timeout_stops_remote_process(monkeypatch):
 def test_partial_injection_failure_is_recovered(monkeypatch):
     lab = DockerLab()
     original = lab._run
+
     def run(service, *args, **kwargs):
         result = original(service, *args, **kwargs)
         if service == "web" and args[:2] == ("iptables", "-A"):
             assert result["exit_code"] == 0
             result["exit_code"] = 1  # 실제 주입 후 명령 실패가 보고되는 상황.
         return result
+
     monkeypatch.setattr(lab, "_run", run)
-    scenario = Scenario.from_dict(read_json(ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json"))
-    record = Referee(lab, ReplayDiagnoser([]), LabInfo.load(ROOT / "config/lab.json")).run_round(scenario)
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json")
+    )
+    record = Referee(lab, ReplayDiagnoser([]), LabInfo.load(ROOT / "config/lab.json")).run_round(
+        scenario
+    )
     assert record["status"] == "invalid" and record["reset_verified"]
     assert lab.health_check(scenario.target_url).ok
