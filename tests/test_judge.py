@@ -401,6 +401,17 @@ def test_summary_and_html():
     )
 
 
+def test_summary_counts_symptom_reproduction():
+    # 주입 실패와 증상 미재현은 재현 실패로, 거부된 제안은 시도에서 뺀다.
+    recs = [
+        run_one()[0],
+        run_one(lab=MockLab(no_symptom=True))[0],
+        run_one(lab=MockLab(fail_inject={"T2"}))[0],
+        run_one(sc=X3_SC)[0],
+    ]
+    assert summarize(recs)[0]["repro"] == "1/3 (33%)"
+
+
 def test_cited_probe_output_embedded_once():
     page = render_html(
         [

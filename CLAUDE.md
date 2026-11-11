@@ -16,6 +16,7 @@ uv run pytest                                   # 전체 테스트
 uv run pytest tests/test_judge.py -k <이름>      # 단일 테스트
 uv run netrunner validate <시나리오.json>...     # Breaker 출력이 계약을 지키는지 검사
 uv run netrunner demo                           # 고정 입력 2라운드를 MockLab으로 실행 → runs/ (git 제외)
+uv run netrunner run --impl docker --repeat 3   # 같은 고정 세트를 실제 Docker 실험망에서 심판으로 반복
 uv run netrunner report <rounds.jsonl> --html out.html
 ```
 
@@ -32,6 +33,7 @@ uv run ruff format
 
 - `contracts.py`: 모듈 사이에 오가는 모든 데이터 클래스. 각 `from_dict`가 필수 키와 타입을 검사하고 `ContractError`를 낸다.
 - `breaker.py`, `lab.py`, `diagnoser.py`: 담당자가 구현할 경계. 각각 `typing.Protocol`(`Breaker`, `Lab`, `Diagnoser`)과 그 자리를 대신하는 스탠드인(`FixedBreaker`, `MockLab`, `ReplayDiagnoser`)이 같이 있다. 실제 구현이 생기면 `Referee(lab=..., diagnoser=...)`에 같은 형태로 꽂는다.
+- `docker_lab.py`: `Lab`의 실제 구현(Docker Compose 실험망, D2·T2). `__main__.py`의 `LAB_IMPLS`에 등록해 `run --impl`로 고른다.
 - `faults.py`: 장애 16종의 단일 출처. 정답 라벨, 매개변수 범위, 관측 차단 여부, 근거 지지 판정용 신호를 가진다. 검증, 채점, 보고서가 모두 여기서 읽는다.
 - `validate.py`(제안 검사), `scoring.py`(채점), `report.py`(지표와 HTML): `referee.py`가 조립한다.
 - `config/lab.json`: 실험망 주소. 실험망 담당이 관리한다.

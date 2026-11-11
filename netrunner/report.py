@@ -39,6 +39,11 @@ def p95(values: list[float]) -> float:
     return s[max(0, math.ceil(0.95 * len(s)) - 1)]
 
 
+def _reproduced(rec: dict) -> bool:
+    """실험망 기록에 성공한 증상 확인 단계가 있으면 True."""
+    return any(s["step"] == "verify_symptom" and s["ok"] for s in rec["lab_log"])
+
+
 def summarize(records: list[dict]) -> list[dict]:
     """모델·방식·세트별 지표.
 
@@ -77,6 +82,8 @@ def summarize(records: list[dict]) -> list[dict]:
                 "time_med_s": round(statistics.median(times), 2) if times else "-",
                 "time_p95_s": round(p95(times), 2) if times else "-",
                 "fooled": ratio(fooled, len(sc)),
+                # 실험망을 쓴 라운드 중 주입 뒤 증상까지 확인된 비율(11주차 완료 기준)
+                "repro": ratio(sum(_reproduced(r) for r in rs), len(rs)),
                 "reset_ok": ratio(
                     sum(r["reset_verified"] is True for r in rs),
                     sum(r["reset_verified"] is not None for r in rs),
@@ -100,6 +107,7 @@ COLUMNS = [
     ("time_med_s", "시간 중앙(s)"),
     ("time_p95_s", "시간 p95(s)"),
     ("fooled", "오진 라운드"),
+    ("repro", "증상 재현"),
     ("reset_ok", "초기화 확인"),
 ]
 

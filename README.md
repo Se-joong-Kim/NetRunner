@@ -26,12 +26,15 @@ uv run pytest
 ```sh
 docker build -t netrunner-lab ./lab
 docker compose up -d --no-build
-python -m netrunner lab-check --repeat 3
-NETRUNNER_INTEGRATION=1 python -m pytest tests
+uv run netrunner run --impl docker --repeat 3   # 심판으로 D2·T2를 3번씩 반복
+uv run netrunner lab-check --repeat 3           # 심판 없이 실험망 단계만 확인
+NETRUNNER_INTEGRATION=1 uv run pytest
 docker compose down
 ```
 
-`lab-check`는 각 장애의 정상 접속, 주입, 증상 확인, 복구, 정상화를 차례로 실행한다. 결과는 `runs/`의 JSONL, 클라이언트 패킷 캡처는 `captures/`의 pcap에 저장한다. `demo`는 여전히 저장된 진단을 사용하는 모의 실행이고, `lab-check`는 AI 진단과 채점을 수행하지 않는다.
+`run`은 고정 세트(`--dir`, 기본 `fixtures/first_integration`)를 심판으로 `--repeat`번 돌리고, 결과 표와 화면을 `runs/`에 남긴다. 진단은 저장된 결과를 재생하므로 AI 진단 성능이 아니라 실험망의 재현·정상화와 심판 경로를 확인하는 용도다. 결과 표의 `증상 재현`과 `초기화 확인` 열이 11주차 완료 기준(반복 시도 중 재현·정상화 성공 건수)이다. 정상화가 확인되지 않으면 그 자리에서 멈춘다. `--impl mock`은 모의 실험망으로 같은 과정을 돌리며, `demo`는 `run --impl mock --repeat 1`과 같다.
+
+`lab-check`는 각 장애의 정상 접속, 주입, 증상 확인, 복구, 정상화를 차례로 실행한다. 결과는 `runs/`의 JSONL, 클라이언트 패킷 캡처는 `captures/`의 pcap에 저장한다. `lab-check`는 AI 진단과 채점을 수행하지 않는다.
 
 실험망 하나에는 검사 명령을 한 번에 하나만 실행한다. 시작 전에 장애가 남아 있으면 초기화 후 정상 접속을 다시 확인한다. 캡처의 `output`에는 원본 pcap의 패킷 번호(`#1` 등), `packets`에는 총 개수, `file`에는 파일 경로를 기록한다. 명령이 시간 초과로 중단되어도 캡처 프로세스를 정리하며, 정리 실패는 정상 복구로 처리하지 않는다.
 
