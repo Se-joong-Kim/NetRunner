@@ -6,6 +6,7 @@ import pytest
 from netrunner.breaker import FixedBreaker
 from netrunner.contracts import ContractError, Diagnosis, Limits, Scenario, read_json
 from netrunner.diagnoser import ReplayDiagnoser
+from netrunner.faults import FAULTS
 from netrunner.lab import MockLab
 from netrunner.referee import Referee, feedback_for
 from netrunner.report import render_html, summarize
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FI = ROOT / "fixtures" / "first_integration"
 EX = ROOT / "fixtures" / "scoring_examples"
 LAB = LabInfo.load(ROOT / "config" / "lab.json")
+LAB.enabled_faults = list(FAULTS)  # 심판 규칙은 아직 실험망에 구현되지 않은 장애도 검사한다.
 
 # 자주 쓰는 고정 입력. 테스트에서 바꿀 때는 dict(R2_DIAG, **patch)처럼 복사한다.
 R1_SC, R1_DIAG = (
@@ -135,6 +137,7 @@ def test_malformed_target_url_is_rejected_not_crash():
     v = validate(scenario(target_url="http://[::1/"), LAB)
     assert not v.ok and "형식 오류" in v.errors[0]
     assert not validate(scenario(target_url="ftp://shop.lab/"), LAB).ok
+    assert not validate(scenario(target_url="http://shop.lab:0/"), LAB).ok
 
 
 def test_integer_ip_param_is_rejected():
@@ -396,6 +399,17 @@ def test_summary_and_html():
     assert (
         "Connection refused" in page and "증상 재현 실패" in page and "실험망 사용 안 함" in page
     )
+
+
+def test_summary_counts_symptom_reproduction():
+    # 주입 실패와 증상 미재현은 재현 실패로, 거부된 제안은 시도에서 뺀다.
+    recs = [
+        run_one()[0],
+        run_one(lab=MockLab(no_symptom=True))[0],
+        run_one(lab=MockLab(fail_inject={"T2"}))[0],
+        run_one(sc=X3_SC)[0],
+    ]
+    assert summarize(recs)[0]["repro"] == "1/3 (33%)"
 
 
 def test_cited_probe_output_embedded_once():

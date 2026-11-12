@@ -164,9 +164,12 @@ def validate(scenario: Scenario, lab: LabInfo) -> ValidationResult:
     # 매개변수 검사가 scenario.port를 쓰므로 URL 형식부터 확인한다.
     try:
         u = scenario.url
-        _ = u.port
+        port = u.port
     except ValueError as e:
         r.errors.append(f"target_url: URL 형식 오류 ({e})")
+        return r
+    if port == 0:  # urlsplit은 0을 오류 없이 돌려준다
+        r.errors.append("target_url: 포트는 1~65535여야 함")
         return r
     if u.scheme not in ("http", "https"):
         r.errors.append(f"target_url: http/https가 아님 ({scenario.target_url})")

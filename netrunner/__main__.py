@@ -1,4 +1,4 @@
-"""python -m netrunner {validate|demo|report} 명령 진입점.
+"""python -m netrunner {validate|demo|run|report|lab-check} 명령 진입점.
 
 객체를 조립하는 가장 바깥 층이다.
 """
@@ -6,13 +6,17 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from collections.abc import Callable
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
 from .contracts import Scenario, read_json
 from .diagnoser import ReplayDiagnoser
-from .lab import MockLab
+from .docker_lab import DockerLab
+from .lab import Lab, MockLab
 from .referee import Referee
 from .report import format_table, load_records, render_html, summarize
 from .validate import LabInfo, validate
@@ -36,36 +40,67 @@ def cmd_validate(args) -> int:
     return 1 if bad else 0
 
 
-def cmd_demo(args) -> int:
-    """고정 입력(시나리오 + 저장된 진단)으로 모의 실험망에서 라운드를 끝까지 돌린다."""
+# 심판에 꽂을 실험망 구현. 새 실험망은 여기에 한 줄 추가한다.
+LAB_IMPLS: dict[str, Callable[[Path], Lab]] = {
+    "mock": lambda _config: MockLab(),
+    "docker": DockerLab,
+}
+
+
+def make_lab(impl: str, config: str | Path) -> Lab:
+    """이름으로 실험망 구현을 만든다. config는 실험망 주소 JSON 경로다."""
+    return LAB_IMPLS[impl](Path(config))
+
+
+def run_fixed_rounds(referee: Referee, scenario_files: list[Path], repeat: int = 1) -> list[dict]:
+    """고정 시나리오를 저장된 진단과 짝지어 repeat번 돌린다.
+
+    정상화가 확인되지 않으면 오염된 실험망이므로 그 자리에서 멈춘다
+    (referee.run_match와 같은 규칙).
+    """
+    records: list[dict] = []
+    for _ in range(repeat):
+        for sf in scenario_files:
+            # 검증에서 거부되는 시나리오는 진단 파일이 없어도 된다.
+            df = sf.with_name(sf.name.replace(".scenario.", ".diagnosis."))
+            referee.diagnoser = ReplayDiagnoser([read_json(df)] if df.exists() else [])
+            records.append(referee.run_round(Scenario.from_dict(read_json(sf))))
+            if records[-1]["reset_verified"] is False:
+                return records
+    return records
+
+
+def cmd_run(args) -> int:
+    """고정 세트를 고른 실험망에서 심판으로 반복 실행하고 지표를 낸다.
+
+    진단은 저장된 결과를 재생하므로 AI 진단 성능이 아니라 실험망의
+    재현·정상화와 심판 경로를 확인하는 용도다.
+    """
     d = Path(args.dir)
     scenario_files = sorted(d.glob("*.scenario.json"))
-    if not scenario_files:
-        print(f"{d}에 *.scenario.json이 없음", file=sys.stderr)
+    if not scenario_files or args.repeat < 1:
+        print(f"{d}에 *.scenario.json이 없거나 반복 횟수가 1보다 작음", file=sys.stderr)
         return 1
     out = Path(args.out)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    records_path = out / f"rounds-{d.name}-{stamp}.jsonl"
+    records_path = out / f"rounds-{d.name}-{args.impl}-{stamp}.jsonl"
     referee = Referee(
-        MockLab(), ReplayDiagnoser([]), LabInfo.load(args.lab), records_path=records_path
+        make_lab(args.impl, args.lab),
+        ReplayDiagnoser([]),
+        LabInfo.load(args.lab),
+        records_path=records_path,
     )
-    records = []
-    for sf in scenario_files:
-        # 검증에서 거부되는 시나리오는 진단 파일이 없어도 된다. 라운드마다 짝을 맞춰 재생한다.
-        df = sf.with_name(sf.name.replace(".scenario.", ".diagnosis."))
-        referee.diagnoser = ReplayDiagnoser([read_json(df)] if df.exists() else [])
-        records.append(referee.run_round(Scenario.from_dict(read_json(sf))))
-        # 정상화 미확인이면 다음 라운드를 돌리지 않는다(referee.run_match와 같은 규칙).
-        if records[-1]["reset_verified"] is False:
-            print("정상화 미확인: 나머지 시나리오를 중단함", file=sys.stderr)
-            break
+    records = run_fixed_rounds(referee, scenario_files, args.repeat)
+    stopped = records[-1]["reset_verified"] is False
+    if stopped:
+        print("정상화 미확인: 나머지 라운드를 중단함", file=sys.stderr)
 
     rows = summarize(records)
     print(format_table(rows))
-    html_path = out / f"report-{d.name}-{stamp}.html"
+    html_path = records_path.with_name(records_path.stem.replace("rounds-", "report-") + ".html")
     html_path.write_text(render_html(records, rows), encoding="utf-8")
     print(f"\n기록: {records_path}\n결과 화면: {html_path}")
-    return 1 if records[-1]["reset_verified"] is False else 0
+    return 1 if stopped else 0
 
 
 def cmd_report(args) -> int:
@@ -79,6 +114,72 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_lab_check(args) -> int:
+    """실제 실험망만 검사한다. 저장된 진단 결과를 실제 진단으로 기록하지 않는다."""
+    info = LabInfo.load(args.lab)
+    lab = DockerLab(args.lab)
+    files = sorted(Path(args.dir).glob("*.scenario.json"))
+    if not files or args.repeat < 1:
+        print("시나리오 파일이 없거나 반복 횟수가 1보다 작음", file=sys.stderr)
+        return 1
+    scenarios = [Scenario.from_dict(read_json(p)) for p in files]
+    for scenario in scenarios:
+        result = validate(scenario, info)
+        if not result.ok or len(scenario.faults) != 1:
+            print(
+                f"{scenario.scenario_id}: 시나리오 오류 {result.errors} (단일 장애만 지원)",
+                file=sys.stderr,
+            )
+            return 1
+    output = Path(args.out)
+    output.mkdir(parents=True, exist_ok=True)
+    path = output / f"lab-check-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.jsonl"
+    for _ in range(args.repeat):
+        for scenario in scenarios:
+            steps = {}
+            try:
+                initial = lab.health_check(scenario.target_url)
+                if not initial.ok:
+                    steps["health_check_initial"] = asdict(initial)
+                    before = lab.reset()
+                    steps["reset_before"] = asdict(before)
+                    if before.ok:
+                        initial = lab.health_check(scenario.target_url)
+                steps["health_check"] = asdict(initial)
+                if initial.ok:
+                    injection = lab.inject(scenario.faults[0])
+                    steps["inject"] = asdict(injection)
+                    if injection.ok:
+                        steps["verify_symptom"] = asdict(lab.verify_symptom(scenario))
+            finally:
+                steps["reset"] = asdict(lab.reset())
+                steps["health_check_after"] = asdict(lab.health_check(scenario.target_url))
+                with path.open("a", encoding="utf-8") as fp:
+                    fp.write(
+                        json.dumps(
+                            {"scenario_id": scenario.scenario_id, "steps": steps},
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+            ok = all(
+                steps.get(name, {}).get("ok", False)
+                for name in (
+                    "health_check",
+                    "inject",
+                    "verify_symptom",
+                    "reset",
+                    "health_check_after",
+                )
+            )
+            print(f"{scenario.scenario_id}: {'성공' if ok else '실패'}")
+            if not ok:
+                print(f"기록: {path}")
+                return 1
+    print(f"기록: {path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """명령줄 인자를 해석해 하위 명령을 실행한다."""
     ap = argparse.ArgumentParser(prog="netrunner", description="NetRunner 심판·통합 도구")
@@ -89,15 +190,28 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("files", nargs="+")
     p.set_defaults(func=cmd_validate)
 
-    p = sub.add_parser("demo", help="고정 입력으로 라운드를 모의 실행")
+    p = sub.add_parser("demo", help="고정 입력으로 라운드를 모의 실행(run --impl mock과 같음)")
     p.add_argument("--dir", default=str(ROOT / "fixtures" / "first_integration"))
     p.add_argument("--out", default=str(ROOT / "runs"))
-    p.set_defaults(func=cmd_demo)
+    p.set_defaults(func=cmd_run, impl="mock", repeat=1)
+
+    p = sub.add_parser("run", help="고정 세트를 고른 실험망에서 심판으로 반복 실행")
+    p.add_argument("--impl", choices=sorted(LAB_IMPLS), default="docker", help="실험망 구현")
+    p.add_argument("--dir", default=str(ROOT / "fixtures" / "first_integration"))
+    p.add_argument("--out", default=str(ROOT / "runs"))
+    p.add_argument("--repeat", type=int, default=1)
+    p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("report", help="라운드 기록으로 지표와 결과 화면 생성")
     p.add_argument("records")
     p.add_argument("--html")
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("lab-check", help="실제 실험망의 장애 재현과 복구 확인")
+    p.add_argument("--dir", default=str(ROOT / "fixtures" / "first_integration"))
+    p.add_argument("--out", default=str(ROOT / "runs"))
+    p.add_argument("--repeat", type=int, default=1)
+    p.set_defaults(func=cmd_lab_check)
 
     args = ap.parse_args(argv)
     return args.func(args)
