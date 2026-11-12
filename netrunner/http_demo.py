@@ -4,40 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from .contracts import Diagnosis, Evidence, Finding, Probe, Scenario, read_json
+from .contracts import Scenario, read_json
+from .diagnoser import HttpDiagnoser
 from .http_lab import ROOT, HttpDockerLab
 from .referee import Referee
 from .report import render_html, summarize
 from .validate import LabInfo
-
-
-class HttpSmokeDiagnoser:
-    """brief의 URL에 실제 요청한다. 장애 정답과 주입 설정은 입력받지 않는다."""
-
-    model = "rules-http-smoke"
-    method = "A"
-
-    def __init__(self, probe):
-        self.probe = probe
-
-    def diagnose(self, brief):
-        """실제 응답이 502일 때만 원본 검사 근거와 함께 진단한다."""
-        observation = self.probe(brief.target_url)
-        trace = [
-            Probe(
-                "http-1",
-                "python-http",
-                {"url": brief.target_url, "location": "client container"},
-                observation["raw_http"],
-                observation["elapsed_ms"],
-            )
-        ]
-        findings = []
-        if observation["http_code"] == 502:
-            findings.append(
-                Finding("HTTP", "서버 오류", [Evidence("probe:http-1", "HTTP 502 응답 관측")])
-            )
-        return Diagnosis(brief.round_id, self.model, self.method, findings, trace)
 
 
 def main():
@@ -49,7 +21,7 @@ def main():
     records = ROOT / "runs" / f"http-{stamp}.jsonl"
     referee = Referee(
         lab,
-        HttpSmokeDiagnoser(lab.probe),
+        HttpDiagnoser(lab.probe),
         LabInfo.load(ROOT / "config/http_lab.json"),
         records_path=records,
     )

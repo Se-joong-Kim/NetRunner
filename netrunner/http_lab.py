@@ -16,12 +16,33 @@ TARGET = "http://nginx/"
 
 # 인자를 쉘로 해석하지 않고 python argv로 전달한다. HTTP 오류도 원본 응답을 보관한다.
 CLIENT_PROBE = """import json, sys, time
-from urllib.request import build_opener, ProxyHandler
+from urllib.parse import urldefrag, urlsplit
+from urllib.request import build_opener, HTTPRedirectHandler, ProxyHandler
 from urllib.error import HTTPError, URLError
+
+class TraceRedirects(HTTPRedirectHandler):
+    def __init__(self, url):
+        self.origin = urlsplit(url)[:2]
+        self.seen = {urldefrag(url).url}
+        self.trace = []
+        self.loop = False
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target = urldefrag(newurl).url
+        self.trace.append("HTTP %s %s %s -> %s" % (code, msg, req.full_url, target))
+        if urlsplit(target)[:2] != self.origin:
+            return None
+        if target in self.seen:
+            self.loop = True
+            return None
+        self.seen.add(target)
+        return super().redirect_request(req, fp, code, msg, headers, target)
+
 t = time.monotonic()
+redirects = TraceRedirects(sys.argv[1])
 try:
     try:
-        response = build_opener(ProxyHandler({})).open(sys.argv[1], timeout=5)
+        response = build_opener(ProxyHandler({}), redirects).open(sys.argv[1], timeout=5)
     except HTTPError as exc:
         response = exc
     with response:
@@ -30,6 +51,8 @@ try:
         result = {"http_code": response.code, "raw_http": raw}
 except (URLError, OSError, TimeoutError) as exc:
     result = {"http_code": None, "raw_http": str(exc)}
+result["raw_http"] = "\\n".join([*redirects.trace, result["raw_http"]])
+result["redirect_loop"] = redirects.loop
 result["elapsed_ms"] = round((time.monotonic() - t) * 1000)
 print(json.dumps(result))
 """
@@ -62,7 +85,7 @@ class HttpDockerLab:
         if not self.docker:
             raise RuntimeError("Docker 명령을 찾을 수 없습니다.")
 
-    def compose(self, *args):
+    def compose(self, *args, timeout: float = 60):
         """전용 Compose 프로젝트에서 명령을 실행하고 출력을 보관한다."""
         command = [
             self.docker,
@@ -79,7 +102,7 @@ class HttpDockerLab:
             capture_output=True,
             encoding="utf-8",
             errors="replace",
-            timeout=60,
+            timeout=timeout,
         )
         observation = {
             "command": ["docker", *command[1:]],
@@ -95,11 +118,29 @@ class HttpDockerLab:
         """HTTP 실험망의 서버와 클라이언트를 실행한다."""
         self.compose("up", "-d")
 
-    def probe(self, target_url: str) -> dict:
+    def probe(self, target_url: str, *, timeout: float = 10) -> dict:
         """클라이언트 컨테이너에서 대상의 실제 HTTP 응답을 수집한다."""
         if target_url != TARGET:
             raise ValueError(f"HTTP 단독 실험망은 {TARGET}만 지원합니다.")
-        command = self.compose("exec", "-T", "client", "python", "-c", CLIENT_PROBE, target_url)
+        started = time.monotonic()
+        try:
+            command = self.compose(
+                "exec",
+                "-T",
+                "client",
+                "python",
+                "-c",
+                CLIENT_PROBE,
+                target_url,
+                timeout=min(timeout, 10),
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "http_code": None,
+                "raw_http": "HTTP 검사 시간 초과",
+                "elapsed_ms": round((time.monotonic() - started) * 1000),
+                "location": "client container",
+            }
         result = json.loads(command["stdout"])
         result["execution"] = command
         result["location"] = "client container"
