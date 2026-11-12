@@ -1,0 +1,3 @@
+# 컨테이너 안에서 실행하는 파일은 Windows(core.autocrlf)에서도 LF로 받는다.
+*.sh text eol=lf
+lab/Dockerfile text eol=lf

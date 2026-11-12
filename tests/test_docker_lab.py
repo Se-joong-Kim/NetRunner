@@ -14,6 +14,13 @@ from netrunner.referee import Referee
 from netrunner.validate import LabInfo
 
 
+def test_lab_scripts_keep_lf_line_endings():
+    # Windows(core.autocrlf=true)에서 CRLF로 풀리면 컨테이너의 sh가
+    # "set: illegal option -"로 바로 종료된다.
+    scripts = [*(ROOT / "lab").glob("*.sh"), ROOT / "lab" / "Dockerfile"]
+    assert [p.name for p in scripts if b"\r" in p.read_bytes()] == []
+
+
 def test_invalid_faults_and_urls_never_run_commands(monkeypatch):
     lab = DockerLab()
     monkeypatch.setattr(lab, "_run", lambda *args, **kwargs: pytest.fail("unexpected command"))
