@@ -166,9 +166,11 @@ def test_braces_in_prose_do_not_break_parsing():
 
 def test_omitted_optional_param_counts_as_duplicate():
     # D4의 domain은 생략하면 대상 도메인(shop.lab)과 같다.
+    # config/lab.json은 D2·T2만 켜 두므로, 이 테스트는 전체 장애를 켠 주소 정보를 쓴다.
+    lab = LabInfo(LAB.domains, LAB.web_ip, LAB.subnet)
     a = {**GOOD, "faults": [{"id": "D4", "params": {"delay_ms": 500}}]}
     b_ = {**GOOD, "faults": [{"id": "D4", "params": {"domain": "shop.lab", "delay_ms": 500}}]}
-    b = LLMBreaker(fake_model(as_text(a), as_text(b_), as_text(GOOD)), LAB, TARGET)
+    b = LLMBreaker(fake_model(as_text(a), as_text(b_), as_text(GOOD)), lab, TARGET)
     b.propose([])
     assert b.propose([]).faults[0].id == "D2"
     assert b.stats.duplicate == 1
