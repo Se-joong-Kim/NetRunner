@@ -79,12 +79,17 @@ class LabInfo:
     web_ip: str
     subnet: str
     enabled_faults: list[str] = field(default_factory=lambda: sorted(FAULTS))
+    # 이름 → IP. 검사 도구가 DNS 서버 이름(dns, alt_dns)을 IP로 확인할 때 쓴다.
+    hosts: dict[str, str] = field(default_factory=dict)
+    # 실험망이 실행할 수 있는 검사 도구. 없으면 도구를 쓸 수 없다.
+    enabled_tools: list[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: str | Path) -> LabInfo:
         """config/lab.json 형식의 파일에서 실험망 정보를 읽는다."""
         d = read_json(path)
-        extra = {"enabled_faults": d["enabled_faults"]} if "enabled_faults" in d else {}
+        optional = ("enabled_faults", "hosts", "enabled_tools")
+        extra = {k: d[k] for k in optional if k in d}
         return cls(domains=d["domains"], web_ip=d["web_ip"], subnet=d["subnet"], **extra)
 
 
