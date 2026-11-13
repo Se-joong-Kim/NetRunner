@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from netrunner.contracts import Limits, ProbeResult
+from netrunner.contracts import ContractError, Limits, ProbeResult, RoundBrief
+from netrunner.diagnoser import ReplayDiagnoser
+from netrunner.lab import ReplayRunner
 from netrunner.toolbox import MAX_OUTPUT_CHARS, Toolbox
 from netrunner.tools import TOOLS
 from netrunner.validate import LabInfo
@@ -121,3 +123,59 @@ def test_closed_toolbox_rejects_calls():
 def test_specs_lists_only_usable_tools():
     tb = box(FakeRunner(), lab=replace(LAB, enabled_tools=["dig"]))
     assert [s["function"]["name"] for s in tb.specs()] == ["dig"]
+
+
+# ---------------------------------------------------------------- 재생
+
+
+def saved(trace, refs, **extra):
+    finding = {"stage": "DNS", "cause": "잘못된 주소", "evidence": [{"ref": r} for r in refs]}
+    return {
+        "round_id": "-",
+        "model": "fixture",
+        "method": "C",
+        "findings": [finding],
+        "trace": trace,
+        **extra,
+    }
+
+
+DIG_P = {"probe_id": "p2", "tool": "dig", "args": DIG, "output": "ANSWER: 1 old"}
+CURL_P = {
+    "probe_id": "p7",
+    "tool": "curl",
+    "args": {"url": "http://shop.lab/"},
+    "output": "curl: (7) Failed",
+}
+BRIEF = RoundBrief("r1", "http://shop.lab/", "사이트가 열리지 않아요.")
+
+
+def test_replay_runner_returns_saved_outputs_in_order():
+    second = dict(DIG_P, probe_id="p3", output="ANSWER: 1 second")
+    runner = ReplayRunner.from_diagnoses([saved([DIG_P, second], [])])
+    assert runner.run_probe("dig", DIG).output == "ANSWER: 1 old"
+    assert runner.run_probe("dig", DIG).output == "ANSWER: 1 second"
+    assert runner.run_probe("dig", DIG).ok is False
+
+
+def replay(d):
+    tb = box(ReplayRunner.from_diagnoses([d]))
+    return ReplayDiagnoser([d]).diagnose(BRIEF, tb), tb
+
+
+def test_replay_diagnoser_remaps_ids():
+    diag, tb = replay(saved([DIG_P, CURL_P], ["probe:p7", "pcap:p2#1"]))
+    assert [e.ref for e in diag.findings[0].evidence] == ["probe:p2", "pcap:p1#1"]
+    assert [p.output for p in tb.record] == ["ANSWER: 1 old", "curl: (7) Failed"]
+    assert diag.trace == [] and diag.round_id == "r1"
+
+
+def test_unrun_refs_stay_missing():
+    diag, _ = replay(saved([DIG_P], ["probe:p9"]))
+    assert diag.findings[0].evidence[0].ref == "probe:unrun-p9"
+
+
+def test_malformed_saved_diagnosis_still_contract_error():
+    bad = saved([dict(DIG_P, packets="12")], [])
+    with pytest.raises(ContractError):
+        ReplayDiagnoser([bad]).diagnose(BRIEF, box(FakeRunner()))

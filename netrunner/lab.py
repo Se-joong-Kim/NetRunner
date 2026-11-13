@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .contracts import FaultSpec, LabResult, ProbeResult, Scenario
+from .contracts import FaultSpec, LabResult, Probe, ProbeResult, Scenario
 
 
 class Lab(Protocol):
@@ -90,3 +90,27 @@ class MockLab:
         if not self.broken_reset:
             self.active.clear()
         return LabResult(not self.broken_reset, "초기화 (mock)")
+
+
+class ReplayRunner:
+    """저장된 진단의 검사 출력을 돌려주는 모의 실행기(ProbeRunner).
+
+    (도구, 인자)가 정확히 같은 저장 검사를 저장된 순서대로 하나씩 쓴다.
+    모의 실험망 시연과 테스트에서 MockLab과 함께 쓴다.
+    """
+
+    def __init__(self, saved: list[Probe]):
+        self._saved = list(saved)
+
+    @classmethod
+    def from_diagnoses(cls, diagnoses: list[dict]) -> ReplayRunner:
+        """진단 dict들의 trace를 저장 검사로 읽는다."""
+        return cls([Probe.from_dict(p) for d in diagnoses for p in d.get("trace", [])])
+
+    def run_probe(self, tool: str, args: dict) -> ProbeResult:
+        """맞는 저장 검사를 하나 꺼내 돌려준다. 없으면 실행하지 못한 결과."""
+        for i, p in enumerate(self._saved):
+            if p.tool == tool and p.args == args:
+                self._saved.pop(i)
+                return ProbeResult(True, p.output, p.elapsed_ms, p.packets, p.file)
+        return ProbeResult(False, error="저장된 출력 없음")
