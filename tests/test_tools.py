@@ -107,3 +107,18 @@ def test_specs_shape_and_no_cause_words():
 def test_missing_parts():
     assert missing_parts("dig", "ANSWER: 1 ...\n;; Query time: 3 msec") == []
     assert missing_parts("capture", "1 IP 10.21.0.2 > 10.20.0.10") != []
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://shop.lab/;id",
+        "http://shop.lab/$(reboot)",
+        "http://shop.lab/`id`",
+        "http://shop.lab/a|b",
+        "http://shop.lab/[1-100000]",
+        "http://shop.lab/{a,b,c}",
+    ],
+)
+def test_url_rejects_shell_and_glob_chars(url):
+    assert check_args("curl", {"url": url}, LAB)

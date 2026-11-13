@@ -59,7 +59,7 @@ python -m pytest tests                          # 심판 테스트
 
 `LabResult`는 `{"ok": bool, "detail": str, "observations": {...}}` 형태이며, 측정값과 캡처 파일 경로는 `observations`에 넣는다.
 
-**검사 실행: `ProbeRunner`.** Diagnoser의 검사를 실행하는 쪽은 `run_probe(tool, args) -> ProbeResult` 하나를 구현한다(`netrunner/lab.py`). 인자는 심판의 도구 창구가 미리 검사해서 넘긴다. 실험망은 클라이언트 컨테이너에서만 실행하고, 출력과 `error`에 장애 정보를 넣지 않는다. `ProbeResult`의 필드는 `ok`, `output`, `elapsed_ms`, `packets`, `file`, `error`다. `ok`는 실험망이 명령을 실행했는지를 뜻한다. 연결 거부처럼 네트워크가 실패한 결과도 `ok=True`이고, 실패 내용은 출력에 담긴다. 실행할 수 있는 도구 목록은 `config/lab.json`의 `enabled_tools`에 적는다. `hosts`의 `dns`, `alt_dns` IP는 `dig`의 `server` 인자 검사에 쓴다. 모의 실행에서는 `ReplayRunner`가 저장된 진단의 검사 출력을 돌려준다.
+**검사 실행: `ProbeRunner`.** Diagnoser의 검사를 실행하는 쪽은 `run_probe(tool, args) -> ProbeResult` 하나를 구현한다(`netrunner/lab.py`). 인자는 심판의 도구 창구가 미리 검사해서 넘긴다. 실험망은 클라이언트 컨테이너에서만 실행하고, 출력과 `error`에 장애 정보를 넣지 않는다. 인자는 셸 문자열로 합치지 말고 argv로 넘기며, curl에는 `--globoff`를 붙인다(URL 규칙은 `validate.lab_url_error`). `ProbeResult`의 필드는 `ok`, `output`, `elapsed_ms`, `packets`, `file`, `error`다. `ok`는 실험망이 명령을 실행했는지를 뜻한다. 연결 거부처럼 네트워크가 실패한 결과도 `ok=True`이고, 실패 내용은 출력에 담긴다. 실행할 수 있는 도구 목록은 `config/lab.json`의 `enabled_tools`에 적는다. `hosts`의 `dns`, `alt_dns` IP는 `dig`의 `server` 인자 검사에 쓴다. 모의 실행에서는 `ReplayRunner`가 저장된 진단의 검사 출력을 돌려준다.
 
 실험망 주소와 구현된 장애 목록(`enabled_faults`)은 `config/lab.json`에 있다. 클라이언트 대역은 `10.21.0.0/24`, 서버 대역은 `10.20.0.0/24`다. 첫 구현은 단일 장애와 HTTP 80번 포트만 재현한다. 실행 방법과 기록 위치는 README를 참고한다.
 

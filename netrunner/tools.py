@@ -11,9 +11,8 @@ import ipaddress
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from urllib.parse import urlsplit
 
-from .validate import LabInfo
+from .validate import LabInfo, lab_url_error
 
 
 @dataclass(frozen=True)
@@ -37,9 +36,6 @@ class Tool:
 
 
 # --- 인자 종류별 허용 값
-
-_URL_MAX = 200
-_BAD_URL_CHARS = re.compile(r"[\s\x00-\x1f\x7f]")
 
 
 def _domain(v: object, lab: LabInfo) -> bool:
@@ -65,20 +61,8 @@ def _dns_server(v: object, lab: LabInfo) -> bool:
 
 
 def _url(v: object, lab: LabInfo) -> bool:
-    if not isinstance(v, str) or len(v) > _URL_MAX or _BAD_URL_CHARS.search(v):
-        return False
-    try:
-        u = urlsplit(v)
-        port = u.port
-    except ValueError:
-        return False
-    return (
-        u.scheme in ("http", "https")
-        and u.hostname in lab.domains
-        and not u.username
-        and not u.password
-        and (port is None or 1 <= port <= 65535)
-    )
+    # 시나리오 대상 URL과 같은 규칙(validate.lab_url_error)을 쓴다.
+    return lab_url_error(v, lab) is None
 
 
 def _int_between(lo: int, hi: int) -> Callable[[object, LabInfo], bool]:

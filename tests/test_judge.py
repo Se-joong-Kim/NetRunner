@@ -11,6 +11,7 @@ from netrunner.lab import MockLab, ReplayRunner
 from netrunner.referee import Referee, feedback_for
 from netrunner.report import render_html, summarize
 from netrunner.scoring import score
+from netrunner.tools import check_args
 from netrunner.validate import LabInfo, find_clues, validate
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -555,3 +556,23 @@ def test_report_falls_back_to_old_trace():
     old = dict(rec, diagnosis=dict(rec["diagnosis"], trace=rec["probes"]))
     del old["probes"]
     assert "after 2 ms: Connection refused" in render_html([old])
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://shop.lab/",
+        "https://news.lab:8443/a?b=1",
+        "http://shop.lab/" + "a" * 250,
+        "http://u:p@shop.lab/",
+        "http://shop.lab/a b",
+        "http://shop.lab/[1-9]",
+        "http://example.com/",
+    ],
+)
+def test_scenario_url_and_probe_url_follow_one_rule(url):
+    # Breaker가 통과시킨 대상 URL은 Diagnoser가 검사할 수 있어야 한다.
+    # H1은 URL에 걸린 매개변수가 없어 URL 규칙만 비교할 수 있다.
+    ok_for_scenario = validate(scenario(target_url=url, faults=[{"id": "H1"}]), LAB).ok
+    ok_for_probe = check_args("curl", {"url": url}, LAB) is None
+    assert ok_for_scenario == ok_for_probe
