@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .contracts import FaultSpec, LabResult, Scenario
+from .contracts import FaultSpec, LabResult, ProbeResult, Scenario
 
 
 class Lab(Protocol):
@@ -26,6 +26,17 @@ class Lab(Protocol):
 
     def reset(self) -> LabResult:
         """모든 규칙을 지우고 서버 설정을 원래대로 되돌린다."""
+
+
+class ProbeRunner(Protocol):
+    """검사 도구를 실행하는 쪽(실험망)이 따를 형태.
+
+    심판의 도구 창구(Toolbox)가 인자를 검사한 뒤 부른다. 클라이언트
+    컨테이너에서만 실행하고, 출력에 장애 정보를 넣지 않는다.
+    """
+
+    def run_probe(self, tool: str, args: dict) -> ProbeResult:
+        """tools.py에 정의된 도구 하나를 실행하고 원본 출력을 돌려준다."""
 
 
 class MockLab:
