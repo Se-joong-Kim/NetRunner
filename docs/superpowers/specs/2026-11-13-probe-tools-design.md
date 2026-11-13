@@ -101,14 +101,15 @@ Referee ── 채점: toolbox.record로 인용 존재·지지 판정 ── 기
 class ProbeRunner(Protocol):
     def run_probe(self, tool: str, args: dict) -> ProbeResult: ...
 
+
 @dataclass
 class ProbeResult:
-    ok: bool              # 실험망이 명령을 실행했는가 (네트워크 결과의 성패가 아님)
-    output: str           # 클라이언트 컨테이너에서 나온 원본 출력
+    ok: bool  # 실험망이 명령을 실행했는가 (네트워크 결과의 성패가 아님)
+    output: str  # 클라이언트 컨테이너에서 나온 원본 출력
     elapsed_ms: int = 0
-    packets: int | None = None   # capture일 때만
-    file: str | None = None      # capture일 때만
-    error: str = ""              # ok=False일 때 이유. 장애 정보를 넣지 않는다
+    packets: int | None = None  # capture일 때만
+    file: str | None = None  # capture일 때만
+    error: str = ""  # ok=False일 때 이유. 장애 정보를 넣지 않는다
 ```
 
 - `run_probe`는 인자가 이미 검사된 상태로 불린다. 그래도 실험망은 클라이언트 컨테이너 밖에서 실행하지 않는다.
