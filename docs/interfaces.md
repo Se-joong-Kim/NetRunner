@@ -90,6 +90,7 @@ Diagnoser는 검사를 **심판이 라운드마다 만들어 넘기는 도구 �
 | `tools.call(name, args)` | 검사 한 번. `ProbeView(probe_id, output, packets, file, error)`를 돌려준다 |
 | `tools.remaining()` | 남은 검사 횟수 |
 
+- Diagnoser가 쓰는 함수는 위 세 개뿐이다. 기록은 심판만 사본(`probes()`)으로 읽는다.
 - 실행된 검사에만 `probe_id`(`p1`, `p2`…)가 붙는다. 근거는 이 번호로 인용한다(`probe:p1`, `pcap:p3#2`).
 - 다음 호출은 실험망을 부르지 않고 `probe_id=None`과 `error`로 거부한다. 거부는 검사 횟수에 세지 않는다.
   - 모르는 도구

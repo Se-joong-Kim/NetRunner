@@ -576,3 +576,23 @@ def test_scenario_url_and_probe_url_follow_one_rule(url):
     ok_for_scenario = validate(scenario(target_url=url, faults=[{"id": "H1"}]), LAB).ok
     ok_for_probe = check_args("curl", {"url": url}, LAB) is None
     assert ok_for_scenario == ok_for_probe
+
+
+def test_bad_rejected_args_do_not_break_records(tmp_path):
+    out = tmp_path / "rounds.jsonl"
+
+    def hook(brief, tools):
+        tools.call("dig", {(1, 2): "x"})
+        return Diagnosis(brief.round_id, "fixture", "C", [])
+
+    referee = Referee(MockLab(), ToolUser(hook), LAB, records_path=out, runner=ReplayRunner([]))
+    rec = referee.run_round(Scenario.from_dict(R2_SC))
+    assert rec["status"] == "scored"
+    assert len(out.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_round_records_probe_runner():
+    rec, _ = run_one()
+    assert rec["probe_runner"] == "ReplayRunner"
+    bare = Referee(MockLab(), ReplayDiagnoser([R2_DIAG]), LAB).run_round(Scenario.from_dict(R2_SC))
+    assert bare["probe_runner"] is None

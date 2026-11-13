@@ -1,6 +1,8 @@
 """심판 쪽 도구 창구(Toolbox)와 재생 실행기·진단기 테스트."""
 
-from dataclasses import replace
+import json
+import threading
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -43,8 +45,8 @@ def test_call_runs_and_records_with_ids():
     tb = box(runner)
     views = [tb.call("dig", DIG), tb.call("dig", dict(DIG, server="alt_dns"))]
     assert [v.probe_id for v in views] == ["p1", "p2"]
-    assert [p.probe_id for p in tb.record] == ["p1", "p2"]
-    assert tb.record[0].output == runner.result.output and tb.record[0].tool == "dig"
+    assert [p.probe_id for p in tb.probes()] == ["p1", "p2"]
+    assert tb.probes()[0].output == runner.result.output and tb.probes()[0].tool == "dig"
     assert views[0].output == runner.result.output
 
 
@@ -62,7 +64,7 @@ def test_rejections_never_reach_runner(name, args, allowed):
     tb = box(runner, allowed=allowed)
     view = tb.call(name, args)
     assert view.probe_id is None and view.error
-    assert runner.calls == [] and len(tb.rejected) == 1 and tb.record == []
+    assert runner.calls == [] and len(tb.rejected_calls()) == 1 and tb.probes() == []
 
 
 def test_garbage_call_is_rejected_not_raised():
@@ -70,7 +72,7 @@ def test_garbage_call_is_rejected_not_raised():
     tb = box(runner)
     assert tb.call(None, None).probe_id is None
     assert tb.call("dig", '{"domain":"shop.lab"}').probe_id is None
-    assert runner.calls == [] and len(tb.rejected) == 2
+    assert runner.calls == [] and len(tb.rejected_calls()) == 2
 
 
 def test_tool_limit():
@@ -97,20 +99,20 @@ def test_time_limit():
 def test_runner_failure_and_exception_are_rejections(runner):
     tb = box(runner)
     view = tb.call("dig", DIG)
-    assert view.probe_id is None and view.error and tb.record == []
+    assert view.probe_id is None and view.error and tb.probes() == []
 
 
 def test_no_runner_rejects():
     tb = box(None)
-    assert tb.call("dig", DIG).probe_id is None and tb.record == []
+    assert tb.call("dig", DIG).probe_id is None and tb.probes() == []
 
 
 def test_output_truncated():
     tb = box(FakeRunner(ProbeResult(True, "x" * 25_000, packets=7)))
     view = tb.call("capture", {"url": "http://shop.lab/"})
-    out = tb.record[0].output
+    out = tb.probes()[0].output
     assert out.startswith("x" * MAX_OUTPUT_CHARS) and "25000" in out
-    assert len(out) < 25_000 and view.output == out and tb.record[0].packets == 7
+    assert len(out) < 25_000 and view.output == out and tb.probes()[0].packets == 7
 
 
 def test_closed_toolbox_rejects_calls():
@@ -166,7 +168,7 @@ def replay(d):
 def test_replay_diagnoser_remaps_ids():
     diag, tb = replay(saved([DIG_P, CURL_P], ["probe:p7", "pcap:p2#1"]))
     assert [e.ref for e in diag.findings[0].evidence] == ["probe:p2", "pcap:p1#1"]
-    assert [p.output for p in tb.record] == ["ANSWER: 1 old", "curl: (7) Failed"]
+    assert [p.output for p in tb.probes()] == ["ANSWER: 1 old", "curl: (7) Failed"]
     assert diag.trace == [] and diag.round_id == "r1"
 
 
@@ -179,3 +181,28 @@ def test_malformed_saved_diagnosis_still_contract_error():
     bad = saved([dict(DIG_P, packets="12")], [])
     with pytest.raises(ContractError):
         ReplayDiagnoser([bad]).diagnose(BRIEF, box(FakeRunner()))
+
+
+# ---------------------------------------------------------------- 기록 보호
+
+
+def test_rejected_args_are_json_safe_snapshots():
+    tb = box(FakeRunner())
+    args = {"domain": "example.com"}
+    tb.call("dig", {(1, 2): "x"})
+    tb.call("dig", {"x": threading.Lock()})
+    tb.call("dig", args)
+    args["domain"] = "changed"
+    calls = tb.rejected_calls()
+    json.dumps([asdict(c) for c in calls], ensure_ascii=False)  # 예외 없이 기록 가능
+    assert calls[2].args == {"domain": "example.com"}
+
+
+def test_record_is_not_writable_from_diagnoser_side():
+    tb = box(FakeRunner())
+    tb.call("dig", DIG)
+    assert not hasattr(tb, "record") and not hasattr(tb, "rejected")
+    got = tb.probes()
+    got[0].output = "forged"
+    got.append(got[0])
+    assert len(tb.probes()) == 1 and tb.probes()[0].output != "forged"

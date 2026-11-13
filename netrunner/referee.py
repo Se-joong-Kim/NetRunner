@@ -75,6 +75,8 @@ class Referee:
             # 도구 창구가 기록한 실제 검사(채점 근거)와 거부된 호출
             "probes": [],
             "rejected_calls": [],
+            # 검사 출력을 낸 쪽. ReplayRunner면 저장된 출력을 재생한 것이다.
+            "probe_runner": type(self.runner).__name__ if self.runner else None,
             "score": None,
             "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "finished_at": None,
@@ -137,8 +139,8 @@ class Referee:
                 # 라운드 뒤에는 창구로 실험망을 만질 수 없게 닫고,
                 # 실행된 검사는 기록에 남긴다.
                 toolbox.close()
-                rec["probes"] = [asdict(p) for p in toolbox.record]
-                rec["rejected_calls"] = [asdict(c) for c in toolbox.rejected]
+                rec["probes"] = [asdict(p) for p in toolbox.probes()]
+                rec["rejected_calls"] = [asdict(c) for c in toolbox.rejected_calls()]
             elapsed = time.monotonic() - t0
             if diagnosis.round_id != round_id:
                 return end("invalid", "진단의 round_id가 brief와 다름")
@@ -152,7 +154,7 @@ class Referee:
                     diagnosis,
                     elapsed,
                     self.limits,
-                    probes=toolbox.record,
+                    probes=toolbox.probes(),
                 )
             )
             return end("scored", "")

@@ -7,9 +7,10 @@ Diagnoser의 모든 검사는 이 창구를 거친다. 창구는 도구 목록(t
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .contracts import Limits, Probe, ProbeView
 from .lab import ProbeRunner
@@ -17,6 +18,8 @@ from .tools import TOOLS, check_args, specs
 from .validate import LabInfo
 
 MAX_OUTPUT_CHARS = 20_000
+# 거부된 호출을 기록할 때 남기는 인자 표현의 최대 길이
+MAX_REJECTED_CHARS = 2_000
 
 
 @dataclass
@@ -46,16 +49,25 @@ class Toolbox:
         self._clock = clock
         self._started = clock()
         self._closed = False
-        self.record: list[Probe] = []
-        self.rejected: list[RejectedCall] = []
+        # 채점 근거. Diagnoser가 고칠 수 없게 숨기고, 심판은 probes()로 사본을 읽는다.
+        self._record: list[Probe] = []
+        self._rejected: list[RejectedCall] = []
 
     def specs(self) -> list[dict]:
         """이 라운드에 쓸 수 있는 도구의 LLM용 설명."""
         return specs(self._usable)
 
+    def probes(self) -> list[Probe]:
+        """실행된 검사 기록의 사본(심판용). 채점은 이것으로만 한다."""
+        return [replace(p, args=dict(p.args)) for p in self._record]
+
+    def rejected_calls(self) -> list[RejectedCall]:
+        """거부된 호출 기록의 사본(심판용)."""
+        return [replace(c) for c in self._rejected]
+
     def remaining(self) -> int:
         """남은 검사 횟수."""
-        return max(0, self._limits.max_tool_calls - len(self.record))
+        return max(0, self._limits.max_tool_calls - len(self._record))
 
     def close(self) -> None:
         """라운드가 끝나면 심판이 부른다. 이후 호출은 모두 거부한다."""
@@ -74,7 +86,7 @@ class Toolbox:
             return self._reject(name, args, result.error or "실험망이 실행하지 못함")
         output = _truncate(result.output)
         probe = Probe(
-            probe_id=f"p{len(self.record) + 1}",
+            probe_id=f"p{len(self._record) + 1}",
             tool=name,
             args=dict(args),
             output=output,
@@ -82,7 +94,7 @@ class Toolbox:
             packets=result.packets,
             file=result.file,
         )
-        self.record.append(probe)
+        self._record.append(probe)
         return ProbeView(probe.probe_id, output, result.packets, result.file)
 
     def _refuse(self, name: object, args: object) -> str:
@@ -102,7 +114,8 @@ class Toolbox:
         return ""
 
     def _reject(self, name: object, args: object, reason: str) -> ProbeView:
-        self.rejected.append(RejectedCall(name, args, reason))
+        # 인자는 Diagnoser가 낸 그대로라 JSON이 아닐 수 있고, 호출 뒤에 바뀔 수도 있다.
+        self._rejected.append(RejectedCall(_snapshot(name), _snapshot(args), reason))
         return ProbeView(None, error=reason)
 
 
@@ -110,3 +123,14 @@ def _truncate(output: str) -> str:
     if len(output) <= MAX_OUTPUT_CHARS:
         return output
     return output[:MAX_OUTPUT_CHARS] + f"\n…(출력 잘림: 원래 {len(output)}자)"
+
+
+def _snapshot(value: object) -> object:
+    """기록용 사본. JSON으로 쓸 수 있는 값이면 그 사본, 아니면 잘린 repr."""
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=repr)
+    except (TypeError, ValueError):
+        text = None
+    if text is not None and len(text) <= MAX_REJECTED_CHARS:
+        return json.loads(text)
+    return repr(value)[:MAX_REJECTED_CHARS]
