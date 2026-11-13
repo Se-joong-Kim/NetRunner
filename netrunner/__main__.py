@@ -16,7 +16,7 @@ from pathlib import Path
 from .contracts import Scenario, read_json
 from .diagnoser import ReplayDiagnoser
 from .docker_lab import DockerLab
-from .lab import Lab, MockLab
+from .lab import Lab, MockLab, ReplayRunner
 from .referee import Referee
 from .report import format_table, load_records, render_html, summarize
 from .validate import LabInfo, validate
@@ -47,23 +47,34 @@ LAB_IMPLS: dict[str, Callable[[Path], Lab]] = {
 }
 
 
+# 실험망 자체가 검사 도구(run_probe)를 실행하는 구현. 여기 없는 구현은 저장된
+# 진단의 검사 출력을 재생한다. DockerLab.run_probe가 생기면 "docker"를 넣는다.
+PROBES_FROM_LAB: frozenset[str] = frozenset()
+
+
 def make_lab(impl: str, config: str | Path) -> Lab:
     """이름으로 실험망 구현을 만든다. config는 실험망 주소 JSON 경로다."""
     return LAB_IMPLS[impl](Path(config))
 
 
-def run_fixed_rounds(referee: Referee, scenario_files: list[Path], repeat: int = 1) -> list[dict]:
+def run_fixed_rounds(
+    referee: Referee, scenario_files: list[Path], repeat: int = 1, replay_probes: bool = True
+) -> list[dict]:
     """고정 시나리오를 저장된 진단과 짝지어 repeat번 돌린다.
 
-    정상화가 확인되지 않으면 오염된 실험망이므로 그 자리에서 멈춘다
-    (referee.run_match와 같은 규칙).
+    replay_probes면 라운드마다 그 진단의 저장 검사 출력을 검사 실행기로
+    꽂는다. 정상화가 확인되지 않으면 오염된 실험망이므로 그 자리에서
+    멈춘다(referee.run_match와 같은 규칙).
     """
     records: list[dict] = []
     for _ in range(repeat):
         for sf in scenario_files:
             # 검증에서 거부되는 시나리오는 진단 파일이 없어도 된다.
             df = sf.with_name(sf.name.replace(".scenario.", ".diagnosis."))
-            referee.diagnoser = ReplayDiagnoser([read_json(df)] if df.exists() else [])
+            saved = [read_json(df)] if df.exists() else []
+            referee.diagnoser = ReplayDiagnoser(saved)
+            if replay_probes:
+                referee.runner = ReplayRunner.from_diagnoses(saved)
             records.append(referee.run_round(Scenario.from_dict(read_json(sf))))
             if records[-1]["reset_verified"] is False:
                 return records
@@ -84,13 +95,18 @@ def cmd_run(args) -> int:
     out = Path(args.out)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     records_path = out / f"rounds-{d.name}-{args.impl}-{stamp}.jsonl"
+    lab = make_lab(args.impl, args.lab)
+    probes_from_lab = args.impl in PROBES_FROM_LAB
     referee = Referee(
-        make_lab(args.impl, args.lab),
+        lab,
         ReplayDiagnoser([]),
         LabInfo.load(args.lab),
         records_path=records_path,
+        runner=lab if probes_from_lab else None,
     )
-    records = run_fixed_rounds(referee, scenario_files, args.repeat)
+    records = run_fixed_rounds(
+        referee, scenario_files, args.repeat, replay_probes=not probes_from_lab
+    )
     stopped = records[-1]["reset_verified"] is False
     if stopped:
         print("정상화 미확인: 나머지 라운드를 중단함", file=sys.stderr)
