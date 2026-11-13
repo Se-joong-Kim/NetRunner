@@ -15,7 +15,7 @@ from .contracts import Diagnosis, Evidence, Finding, Probe, RoundBrief
 
 
 class Diagnoser(Protocol):
-    """Diagnoser가 따를 형태. 증상만 보고 원인을 진단."""
+    """Diagnoser가 따를 형태. 증상만 보고 원인을 진단한다."""
 
     # 라운드 기록의 모델·방식 이름은 여기서만 가져온다.
     # 진단 실패 라운드도 이 모델의 실패로 집계된다.
@@ -65,7 +65,7 @@ class HttpDiagnoser:
 class ReplayDiagnoser:
     """저장된 진단 결과를 순서대로 돌려준다.
 
-    실제 Diagnoser가 붙기 전 심판 개발·시연용.
+    실제 Diagnoser가 붙기 전 심판 개발·시연용이다.
     """
 
     def __init__(self, diagnoses: list[dict]):
