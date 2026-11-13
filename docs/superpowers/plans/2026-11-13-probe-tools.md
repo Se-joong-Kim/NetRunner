@@ -218,7 +218,7 @@ kind 판정:
   - `test_malformed_saved_diagnosis_still_contract_error`: 기존 형식 오류 사례 하나가 `ContractError`를 낸다.
 - [ ] **Step 2:** `uv run pytest tests/test_toolbox.py -v`를 실행한다. 기대: FAIL.
 - [ ] **Step 3:** `ReplayRunner`와 새 `ReplayDiagnoser`를 구현하고 Protocol 시그니처를 바꾼다. 인용 id 변환은 `diagnoser.py`의 내부 함수 `_remap_ref(ref: str, ids: dict[str, str]) -> str`로 하고, `EVIDENCE_REF`를 쓴다.
-- [ ] **Step 4:** `uv run pytest tests/test_toolbox.py -q`를 실행한다. 기대: 통과. 이 시점에는 `tests/test_judge.py`가 깨질 수 있다. Task 5에서 고친다.
+- [ ] **Step 4:** `uv run pytest tests/test_toolbox.py -q`를 실행한다. 기대: 통과. 심판이 아직 `diagnose(brief)`로 부르므로, 이 커밋에서는 `tests/test_judge.py`, `tests/test_run.py`, `tests/test_breaker.py`의 라운드 테스트가 깨진다(진단 실행 오류로 무효 처리). Task 5까지 이어서 하고, 이 상태로 푸시하지 않는다.
 - [ ] **Step 5:** 커밋한다. `재생 실행기·재생 진단기를 창구 경유로 전환`
 
 ### Task 5: 심판·채점·결과 화면을 창구 기록으로 전환
