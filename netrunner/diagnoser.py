@@ -37,8 +37,12 @@ class HttpDiagnoser:
     def __init__(self, probe: Callable[..., dict]):
         self._probe = probe
 
-    def diagnose(self, brief: RoundBrief) -> Diagnosis:
-        """한도 내에서 HTTP를 검사하고 확인된 원인만 반환."""
+    def diagnose(self, brief: RoundBrief, tools: Toolbox) -> Diagnosis:
+        """한도 내에서 HTTP를 검사하고 확인된 원인만 반환.
+
+        tools는 아직 쓰지 않는다. 검사를 tools.call("curl", ...)로 바꾸는
+        작업은 Diagnoser 담당(이현섭)이 한다.
+        """
         result = Diagnosis(brief.round_id, self.model, self.method, [])
         if brief.limits.max_tool_calls <= 0 or brief.limits.max_seconds <= 0:
             return result

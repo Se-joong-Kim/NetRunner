@@ -4,6 +4,11 @@ import pytest
 
 from netrunner.contracts import Limits, RoundBrief
 from netrunner.diagnoser import HttpDiagnoser
+from netrunner.toolbox import Toolbox
+from netrunner.validate import LabInfo
+
+# HttpDiagnoser는 아직 창구를 쓰지 않는다(tools.call 전환은 이현섭 작업).
+NO_TOOLS = Toolbox(None, LabInfo(["nginx"], "127.0.0.1", "127.0.0.0/8"), Limits(), frozenset())
 
 
 @pytest.mark.parametrize(
@@ -26,7 +31,7 @@ def test_http_diagnosis_from_observation(code, loop, output, cause):
     )
     brief = RoundBrief("r1", "http://nginx/", "사이트가 열리지 않아요.")
 
-    result = HttpDiagnoser(probe).diagnose(brief)
+    result = HttpDiagnoser(probe).diagnose(brief, NO_TOOLS)
 
     probe.assert_called_once_with(brief.target_url, timeout=brief.limits.max_seconds)
     assert result.round_id == brief.round_id
@@ -46,7 +51,7 @@ def test_http_diagnoser_skips_probe_when_budget_is_zero(limits):
     probe = Mock()
     brief = RoundBrief("r1", "http://nginx/", "사이트가 열리지 않아요.", limits)
 
-    result = HttpDiagnoser(probe).diagnose(brief)
+    result = HttpDiagnoser(probe).diagnose(brief, NO_TOOLS)
 
     probe.assert_not_called()
     assert result.trace == []
