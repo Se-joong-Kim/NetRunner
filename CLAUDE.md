@@ -6,18 +6,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 컴퓨터 네트워크 팀 프로젝트. Breaker(장애를 심는 LLM)와 Diagnoser(증상만 듣고 원인을 찾는 LLM)를 Docker 실험망에서 겨루게 하고, Python 심판이 정답과 근거를 대조해 채점한다. 4인 팀이 모듈을 하나씩 맡고(README 표 참고), 이 저장소의 `netrunner/`는 심판·통합 뼈대와 모듈 사이 계약이다. 설계안과 개발 계획은 `docs/planning/`(docx)에 있다.
 
+LLM은 팀 결정대로 GLM을 opencode 경유로 쓴다. Anthropic API 어댑터는 만들지 않는다.
+
 ## 명령
 
 의존성은 uv로 관리한다. 런타임 의존성은 없고(표준 라이브러리만), 개발 의존성은 pytest뿐이다. Python 3.10 이상.
 
 ```
 uv sync
-uv run pytest                                   # 전체 테스트
+uv run pytest                                   # 전체 테스트 (실험망 테스트는 건너뜀)
 uv run pytest tests/test_judge.py -k <이름>      # 단일 테스트
+NETRUNNER_INTEGRATION=1 uv run pytest           # Docker 실험망 테스트까지 (실험망이 떠 있어야 함)
 uv run netrunner validate <시나리오.json>...     # Breaker 출력이 계약을 지키는지 검사
-uv run netrunner demo                           # 고정 입력 2라운드를 MockLab으로 실행 → runs/ (git 제외)
+uv run netrunner demo                           # 고정 입력 2라운드를 MockLab으로 실행 → runs/ (git 제외). run --impl mock과 같음
 uv run netrunner run --impl docker --repeat 3   # 같은 고정 세트를 실제 Docker 실험망에서 심판으로 반복
+uv run netrunner lab-check --repeat 3           # 심판 없이 실험망 단계만 확인 (AI 진단·채점 없음)
 uv run netrunner report <rounds.jsonl> --html out.html
+```
+
+Docker 실험망은 저장소 루트에서 띄우고 내린다. 이미지를 먼저 빌드해야 한다.
+
+```
+docker build -t netrunner-lab ./lab
+docker compose up -d --no-build
+docker compose down
 ```
 
 린터와 포매터는 ruff를 쓴다.
@@ -33,6 +45,8 @@ uv run ruff format
 
 - `contracts.py`: 모듈 사이에 오가는 모든 데이터 클래스. 각 `from_dict`가 필수 키와 타입을 검사하고 `ContractError`를 낸다.
 - `breaker.py`, `lab.py`, `diagnoser.py`: 담당자가 구현할 경계. 각각 `typing.Protocol`(`Breaker`, `Lab`, `Diagnoser`)과 그 자리를 대신하는 스탠드인(`FixedBreaker`, `MockLab`, `ReplayDiagnoser`)이 같이 있다. 실제 구현이 생기면 `Referee(lab=..., diagnoser=...)`에 같은 형태로 꽂는다.
+- `breaker.py`의 `LLMBreaker`: 모델 호출 함수 `complete(prompt) -> str`을 인자로 받아 시나리오를 제안하고 검사한다. 호출 실패는 `CompletionError`로 올라오며 재시도 횟수에 센다. 모델 연결(진입점에서 `complete`를 만드는 일)은 아직 없다.
+- `breaker_prompt.py`: `LLMBreaker`가 쓸 프롬프트 문자열을 만든다. 외부 호출은 하지 않는다.
 - `docker_lab.py`: `Lab`의 실제 구현(Docker Compose 실험망, D2·T2). `__main__.py`의 `LAB_IMPLS`에 등록해 `run --impl`로 고른다.
 - `tools.py`: Diagnoser가 쓰는 검사 도구 목록의 단일 출처(이름, 인자, 허용 값, LLM용 설명, 방식별 묶음).
 - `toolbox.py`: 심판이 라운드마다 만들어 Diagnoser에 넘기는 도구 창구. 인자·한도를 검사하고 실제 출력을 기록하며, 채점은 이 기록으로만 한다. 실험망 쪽은 `lab.py`의 `ProbeRunner.run_probe` 하나를 구현한다.
@@ -48,6 +62,8 @@ uv run ruff format
 - 실험망 함수가 예외를 내도 라운드 기록이 깨지지 않게 실패로 기록한다.
 - Breaker가 낸 시나리오는 `origin`을 항상 `breaker`로 바꿔 기록하고, 고정 세트(`fixed`) 라운드는 Breaker의 입력 기록에서 뺀다.
 - 거부된 제안은 실험망을 건드리지 않는다.
+- `LLMBreaker`의 중복 판정은 채점이 끝난 유효 라운드(`valid=True`)의 장애 조합만 본다. 검증에서 거부된 라운드는 넣지 않아, 증상만 고친 재제안을 막지 않는다.
+- `Referee.run_match`는 Breaker가 `BreakerError`를 내면 매치를 중단한다. 이 처리 방식은 심판 담당과 아직 정하지 않았다. 바꾸기 전에 합의한다.
 
 ## 작업 기준
 
