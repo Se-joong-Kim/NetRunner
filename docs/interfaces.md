@@ -121,7 +121,7 @@ Diagnoser는 검사를 **심판이 라운드마다 만들어 넘기는 도구 �
 | B | 없음 |
 | C-1 | `capture` 제외 |
 
-모르는 방식은 무효 라운드다. 도구마다 출력에 반드시 들어갈 내용(`must_include`)이 있고, 실험망 테스트에서 `tools.missing_parts(tool, output)`로 확인한다.
+모르는 방식은 무효 라운드다. 도구마다 출력에 반드시 들어갈 내용(`must_include`)이 있고, 실험망 테스트에서 `tools.missing_parts(tool, output)`로 확인한다. curl은 종료 코드, HTTP 상태, 단계별 시간 다섯 개(`time_namelookup`, `time_connect`, `time_appconnect`, `time_starttransfer`, `time_total`)가 출력에 있어야 한다. `-v` 진행 기록은 curl 버전마다 형식이 달라 출력으로 확인하지 않고, 실험망의 `run_probe` 테스트에서 argv에 `-v`가 들어가는지 확인한다.
 
 ## 4. Diagnoser → 심판: `Diagnosis`
 

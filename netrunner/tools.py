@@ -104,16 +104,21 @@ TOOLS: dict[str, Tool] = {
         Tool(
             "curl",
             "클라이언트에서 URL로 요청을 보내고 종료 코드, 상태 코드, "
-            "단계별 시간(이름 확인, 연결, 첫 바이트, 전체)을 보여 준다.",
+            "단계별 시간(이름 확인, 연결, TLS 연결, 첫 바이트, 전체)과 "
+            "요청·응답 진행 기록을 보여 준다.",
             (
                 Arg("url", "url", True, "요청할 URL(실험망 도메인, http 또는 https)"),
                 Arg("resolve_ip", "lab_ip", False, "주면 이름 확인 없이 이 IP로 접속한다"),
             ),
+            # -v 진행 기록은 curl 버전마다 형식이 달라 여기서 보지 않는다.
+            # 실험망의 run_probe 테스트가 argv에 -v가 있는지 확인한다.
             (
                 r"exit_code=\d+",
                 r"http_code=\d+",
                 r"time_namelookup=",
                 r"time_connect=",
+                r"time_appconnect=",
+                r"time_starttransfer=",
                 r"time_total=",
             ),
         ),

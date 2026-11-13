@@ -109,6 +109,14 @@ def test_missing_parts():
     assert missing_parts("capture", "1 IP 10.21.0.2 > 10.20.0.10") != []
 
 
+def test_curl_output_needs_every_phase_time():
+    # 설계 문서 3장: 단계별 시간(namelookup, connect, appconnect, starttransfer, total)
+    out = "exit_code=0\nhttp_code=200\ntime_namelookup=0.001\ntime_connect=0.002\ntime_total=0.010"
+    assert set(missing_parts("curl", out)) == {"time_appconnect=", "time_starttransfer="}
+    full = out + "\ntime_appconnect=0.000\ntime_starttransfer=0.009"
+    assert missing_parts("curl", full) == []
+
+
 @pytest.mark.parametrize(
     "url",
     [
