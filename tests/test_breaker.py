@@ -174,3 +174,59 @@ def test_omitted_optional_param_counts_as_duplicate():
     b.propose([])
     assert b.propose([]).faults[0].id == "D2"
     assert b.stats.duplicate == 1
+
+
+def test_history_combination_is_not_proposed_again():
+    past = BreakerFeedback(
+        scenario_id="BR-001",
+        faults=[FaultSpec("D2", {"domain": "shop.lab", "ip": "10.20.0.99"})],
+        complaint="사이트가 열리지 않아요.",
+        valid=True,
+    )
+    other = {**GOOD, "faults": [{"id": "T2", "params": {"port": 80}}]}
+    b = LLMBreaker(fake_model(as_text(GOOD), as_text(other)), LAB, TARGET)
+    # 지난 라운드와 같은 D2 조합은 낼 수 없고, 다른 조합을 내야 한다.
+    assert b.propose([past]).faults[0].id == "T2"
+    assert b.stats.duplicate == 1
+
+
+def test_api_error_is_retried_and_counted():
+    from netrunner.breaker import CompletionError
+
+    calls = iter([CompletionError("429"), as_text(GOOD)])
+
+    def flaky(prompt):
+        item = next(calls)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    b = LLMBreaker(flaky, LAB, TARGET)
+    assert b.propose([]).faults[0].id == "D2"
+    assert b.stats.api_errors == 1 and b.stats.accepted == 1 and b.stats.calls == 2
+
+
+def test_persistent_api_error_raises_breaker_error():
+    from netrunner.breaker import CompletionError
+
+    def down(prompt):
+        raise CompletionError("연결 실패")
+
+    b = LLMBreaker(down, LAB, TARGET, max_attempts=2)
+    with pytest.raises(BreakerError, match="연결 실패"):
+        b.propose([])
+    assert b.stats.api_errors == 2
+
+
+def test_rejected_round_faults_are_not_treated_as_duplicates():
+    # 검증에서 거부된 라운드는 채점되지 않았으므로 장애 조합을 막지 않는다.
+    rejected = BreakerFeedback(
+        scenario_id="BR-001",
+        faults=[FaultSpec("D2", {"domain": "shop.lab", "ip": "10.20.0.99"})],
+        complaint="DNS가 안 돼요.",
+        valid=False,
+        invalid_reason="원인 단서",
+    )
+    b = LLMBreaker(fake_model(as_text(GOOD)), LAB, TARGET)
+    assert b.propose([rejected]).faults[0].id == "D2"
+    assert b.stats.duplicate == 0
