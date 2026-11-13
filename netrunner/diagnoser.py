@@ -8,9 +8,10 @@ Diagnoser 담당은 diagnose(brief)를 구현하고 Diagnosis 형식으로
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from typing import Protocol
 
-from .contracts import Diagnosis, RoundBrief
+from .contracts import Diagnosis, Evidence, Finding, Probe, RoundBrief
 
 
 class Diagnoser(Protocol):
@@ -23,6 +24,42 @@ class Diagnoser(Protocol):
 
     def diagnose(self, brief: RoundBrief) -> Diagnosis:
         """brief만 보고 진단 결과를 돌려준다."""
+
+
+class HttpDiagnoser:
+    """HTTP 검사 결과를 근거로 원인을 판별하는 규칙 기반 진단기."""
+
+    model = "rules-http"
+    method = "A"
+
+    def __init__(self, probe: Callable[..., dict]):
+        self._probe = probe
+
+    def diagnose(self, brief: RoundBrief) -> Diagnosis:
+        """한도 내에서 HTTP를 검사하고 확인된 원인만 반환."""
+        result = Diagnosis(brief.round_id, self.model, self.method, [])
+        if brief.limits.max_tool_calls <= 0 or brief.limits.max_seconds <= 0:
+            return result
+
+        observation = self._probe(brief.target_url, timeout=brief.limits.max_seconds)
+        probe = Probe(
+            "http-1",
+            "python-http",
+            {"url": brief.target_url, "location": observation["location"]},
+            observation["raw_http"],
+            observation["elapsed_ms"],
+        )
+        result.trace.append(probe)
+        if observation["http_code"] == 502:
+            cause, claim = "서버 오류", "HTTP 502 응답 관측"
+        elif observation.get("redirect_loop"):
+            cause, claim = "리다이렉트 순환", "리다이렉트 대상이 검사 경로에 다시 등장"
+        else:
+            return result
+        result.findings.append(
+            Finding("HTTP", cause, [Evidence(f"probe:{probe.probe_id}", claim)])
+        )
+        return result
 
 
 class ReplayDiagnoser:
