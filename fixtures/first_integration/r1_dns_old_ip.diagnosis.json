@@ -14,13 +14,13 @@
     }
   ],
   "trace": [
-    {"probe_id": "p1", "tool": "curl", "args": {"url": "http://shop.lab/", "timeout_s": 5},
+    {"probe_id": "p1", "tool": "curl", "args": {"url": "http://shop.lab/"},
      "output": "curl: (28) Failed to connect to shop.lab port 80 after 5001 ms: Timeout was reached\ntime_namelookup=0.002 time_connect=0.000 http_code=000", "elapsed_ms": 5003},
-    {"probe_id": "p2", "tool": "dig", "args": {"name": "shop.lab"},
+    {"probe_id": "p2", "tool": "dig", "args": {"domain": "shop.lab"},
      "output": ";; ANSWER SECTION:\nshop.lab.\t\t300\tIN\tA\t10.20.0.99\n\n;; Query time: 2 msec\n;; SERVER: 10.20.0.53#53(10.20.0.53) (UDP)", "elapsed_ms": 4},
-    {"probe_id": "p3", "tool": "dig", "args": {"name": "shop.lab", "server": "10.20.0.54"},
+    {"probe_id": "p3", "tool": "dig", "args": {"domain": "shop.lab", "server": "10.20.0.54"},
      "output": ";; ANSWER SECTION:\nshop.lab.\t\t300\tIN\tA\t10.20.0.10\n\n;; Query time: 1 msec\n;; SERVER: 10.20.0.54#53(10.20.0.54) (UDP)", "elapsed_ms": 3},
-    {"probe_id": "p4", "tool": "curl", "args": {"url": "http://shop.lab/", "resolve": "shop.lab:80:10.20.0.10"},
+    {"probe_id": "p4", "tool": "curl", "args": {"url": "http://shop.lab/", "resolve_ip": "10.20.0.10"},
      "output": "time_namelookup=0.000 time_connect=0.001 time_starttransfer=0.004 http_code=200", "elapsed_ms": 6}
   ],
   "llm_calls": 4,

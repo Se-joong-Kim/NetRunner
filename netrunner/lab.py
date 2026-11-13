@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .contracts import FaultSpec, LabResult, Scenario
+from .contracts import FaultSpec, LabResult, Probe, ProbeResult, Scenario
 
 
 class Lab(Protocol):
@@ -26,6 +26,17 @@ class Lab(Protocol):
 
     def reset(self) -> LabResult:
         """모든 규칙을 지우고 서버 설정을 원래대로 되돌린다."""
+
+
+class ProbeRunner(Protocol):
+    """검사 도구를 실행하는 쪽(실험망)이 따를 형태.
+
+    심판의 도구 창구(Toolbox)가 인자를 검사한 뒤 부른다. 클라이언트
+    컨테이너에서만 실행하고, 출력에 장애 정보를 넣지 않는다.
+    """
+
+    def run_probe(self, tool: str, args: dict) -> ProbeResult:
+        """tools.py에 정의된 도구 하나를 실행하고 원본 출력을 돌려준다."""
 
 
 class MockLab:
@@ -79,3 +90,27 @@ class MockLab:
         if not self.broken_reset:
             self.active.clear()
         return LabResult(not self.broken_reset, "초기화 (mock)")
+
+
+class ReplayRunner:
+    """저장된 진단의 검사 출력을 돌려주는 모의 실행기(ProbeRunner).
+
+    (도구, 인자)가 정확히 같은 저장 검사를 저장된 순서대로 하나씩 쓴다.
+    모의 실험망 시연과 테스트에서 MockLab과 함께 쓴다.
+    """
+
+    def __init__(self, saved: list[Probe]):
+        self._saved = list(saved)
+
+    @classmethod
+    def from_diagnoses(cls, diagnoses: list[dict]) -> ReplayRunner:
+        """진단 dict들의 trace를 저장 검사로 읽는다."""
+        return cls([Probe.from_dict(p) for d in diagnoses for p in d.get("trace", [])])
+
+    def run_probe(self, tool: str, args: dict) -> ProbeResult:
+        """맞는 저장 검사를 하나 꺼내 돌려준다. 없으면 실행하지 못한 결과."""
+        for i, p in enumerate(self._saved):
+            if p.tool == tool and p.args == args:
+                self._saved.pop(i)
+                return ProbeResult(True, p.output, p.elapsed_ms, p.packets, p.file)
+        return ProbeResult(False, error="저장된 출력 없음")

@@ -10,7 +10,7 @@ from netrunner.diagnoser import ReplayDiagnoser
 from netrunner.docker_lab import DockerLab
 from netrunner.lab import MockLab
 from netrunner.referee import Referee
-from netrunner.report import load_records
+from netrunner.report import load_records, summarize
 from netrunner.validate import LabInfo
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -54,3 +54,14 @@ def test_real_lab_reproduces_and_resets_every_round(tmp_path):
     assert all(r["status"] == "scored" and r["reset_verified"] for r in recs), [
         (r["scenario_id"], r["invalid_reason"]) for r in recs
     ]
+
+
+def test_mock_run_keeps_metrics(tmp_path):
+    assert main(["run", "--impl", "mock", "--repeat", "3", "--out", str(tmp_path)]) == 0
+    recs = records_in(tmp_path)
+    (row,) = summarize(recs)
+    assert row["rounds"] == "6/6 (100%)" and row["cause_acc"] == "6/6 (100%)"
+    assert row["evidence"] == "9/15 (60%)" and row["evidence_unverified"] == 6
+    assert row["tool_calls_med"] == 3.5
+    assert row["repro"] == "6/6 (100%)" and row["reset_ok"] == "6/6 (100%)"
+    assert all(r["probes"] for r in recs)

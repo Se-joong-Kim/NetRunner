@@ -19,7 +19,7 @@ python -m pytest tests                          # 심판 테스트
 1. **검증**: 허용 목록, 매개변수 범위, 증상 설명의 원인 단서, 관측 가능성을 검사한다. 거부되면 Breaker가 다시 제안한다(최대 3회). 거부된 제안은 실험망을 건드리지 않는다.
 2. **정상 확인**: 실험망 `health_check`. 실패하면 `reset` 후 한 번 더 확인하고, 그래도 실패하면 무효 라운드로 처리한다. 실험망 함수가 예외를 내도 무효 라운드로 기록한다.
 3. **주입·재현 확인**: 장애마다 `inject`를 부른 뒤 `verify_symptom`을 부른다. 증상이 나타나지 않으면 무효 라운드다.
-4. **진단**: Diagnoser에게는 `RoundBrief`만 넘긴다. 시나리오 ID, 장애, 주입 로그, 정답은 넘기지 않는다.
+4. **진단**: Diagnoser에게는 `RoundBrief`와 도구 창구(`Toolbox`)만 넘긴다. 검사는 창구로만 하고, 창구가 실제 출력을 기록한다. 시나리오 ID, 장애, 주입 로그, 정답은 넘기지 않는다.
 5. **채점·정답 공개**
 6. **복구·정상화 확인**: `reset` 후 `health_check`를 다시 부른다. 무효 라운드여도 반드시 실행하며, 정상화가 확인되지 않으면 다음 라운드를 돌리지 않는다.
 7. **기록**: 라운드마다 JSONL 한 줄을 남긴다. 결과 화면과 Breaker의 기억은 이 기록으로 만든다.
@@ -59,6 +59,8 @@ python -m pytest tests                          # 심판 테스트
 
 `LabResult`는 `{"ok": bool, "detail": str, "observations": {...}}` 형태이며, 측정값과 캡처 파일 경로는 `observations`에 넣는다.
 
+**검사 실행: `ProbeRunner`.** Diagnoser의 검사를 실행하는 쪽은 `run_probe(tool, args) -> ProbeResult` 하나를 구현한다(`netrunner/lab.py`). 인자는 심판의 도구 창구가 미리 검사해서 넘긴다. 실험망은 클라이언트 컨테이너에서만 실행하고, 출력과 `error`에 장애 정보를 넣지 않는다. 인자는 셸 문자열로 합치지 말고 argv로 넘기며, curl에는 `--globoff`를 붙인다(URL 규칙은 `validate.lab_url_error`). `ProbeResult`의 필드는 `ok`, `output`, `elapsed_ms`, `packets`, `file`, `error`다. `ok`는 실험망이 명령을 실행했는지를 뜻한다. 연결 거부처럼 네트워크가 실패한 결과도 `ok=True`이고, 실패 내용은 출력에 담긴다. 실행할 수 있는 도구 목록은 `config/lab.json`의 `enabled_tools`에 적는다. `hosts`의 `dns`, `alt_dns` IP는 `dig`의 `server` 인자 검사에 쓴다. 모의 실행에서는 `ReplayRunner`가 저장된 진단의 검사 출력을 돌려준다.
+
 실험망 주소와 구현된 장애 목록(`enabled_faults`)은 `config/lab.json`에 있다. 클라이언트 대역은 `10.21.0.0/24`, 서버 대역은 `10.20.0.0/24`다. 첫 구현은 단일 장애와 HTTP 80번 포트만 재현한다. 실행 방법과 기록 위치는 README를 참고한다.
 
 `DockerLab.verify_symptom`의 `observations.capture`에는 원본 `stdout`, 패킷 번호를 표시한 `output`, 총 패킷 수 `packets`, 파일 경로 `file`을 넣는다. `lab-check`는 실험망 검증 전용이며 이 값을 Diagnoser의 Probe로 자동 제출하지 않는다. 캡처 종료를 확인하지 못하면 초기화 성공으로 처리하지 않는다.
@@ -74,7 +76,52 @@ python -m pytest tests                          # 심판 테스트
 }
 ```
 
-`round_id`는 시나리오와 무관한 난수다. Diagnoser 담당은 `netrunner/diagnoser.py`의 `diagnose(brief) -> Diagnosis`를 구현하고, 클래스에 `model`과 `method` 속성을 둔다. 진단이 실패한 라운드도 그 모델의 실패로 집계하기 위해서다. 시간 한도는 심판이 잰 시간으로 검사한다.
+`round_id`는 시나리오와 무관한 난수다. Diagnoser 담당은 `netrunner/diagnoser.py`의 `diagnose(brief, tools) -> Diagnosis`를 구현하고, 클래스에 `model`과 `method` 속성을 둔다. 진단이 실패한 라운드도 그 모델의 실패로 집계하기 위해서다. 시간 한도는 심판이 잰 시간으로 검사한다.
+
+## 3-1. Diagnoser ↔ 심판: 검사 도구 창구 `Toolbox`
+
+설계: `docs/superpowers/specs/2026-11-13-probe-tools-design.md`
+
+Diagnoser는 검사를 **심판이 라운드마다 만들어 넘기는 도구 창구로만** 실행한다(`diagnose(brief, tools)`). 창구가 실험망이 실제로 낸 출력을 기록하고, 채점은 이 기록으로만 한다. Diagnoser가 스스로 적은 `trace`는 근거로 인정하지 않는다.
+
+| 함수 | 하는 일 |
+|---|---|
+| `tools.specs()` | 이 라운드에 쓸 수 있는 도구의 LLM용 설명(OpenAI `tools` 형식) |
+| `tools.call(name, args)` | 검사 한 번. `ProbeView(probe_id, output, packets, file, error)`를 돌려준다 |
+| `tools.remaining()` | 남은 검사 횟수 |
+
+- Diagnoser가 쓰는 함수는 위 세 개뿐이다. 기록은 심판만 사본(`probes()`)으로 읽는다.
+- 실행된 검사에만 `probe_id`(`p1`, `p2`…)가 붙는다. 근거는 이 번호로 인용한다(`probe:p1`, `pcap:p3#2`).
+- 다음 호출은 실험망을 부르지 않고 `probe_id=None`과 `error`로 거부한다. 거부는 검사 횟수에 세지 않는다.
+  - 모르는 도구
+  - 이 방식에서 허용되지 않은 도구
+  - `enabled_tools`에 없는 도구
+  - 인자 오류
+  - 검사·시간 한도 초과
+  - 실험망 미지원·오류
+  - 라운드가 끝난 뒤 호출
+- 출력이 20,000자를 넘으면 앞부분만 남기고 잘렸다고 표시한다.
+
+도구 목록은 `netrunner/tools.py`가 단일 출처다.
+
+| 도구 | 인자(굵게는 필수) | 허용 값 |
+|---|---|---|
+| `dig` | **domain**, server | 실험망 도메인 / `dns`, `alt_dns` 또는 그 IP |
+| `curl` | **url**, resolve_ip | http·https이고 호스트가 실험망 도메인 / 실험망 대역 IP |
+| `capture` | **url** | curl과 같음. 캡처하는 동안 요청 한 번, 패킷마다 `#<n>` |
+| `openssl` | **host**, port, servername | 실험망 도메인 / 1–65535 / 실험망 도메인 |
+| `ping` | **host**, count | 실험망 도메인 또는 대역 IP / 1–10 |
+| `tracepath` | **host** | ping과 같음 |
+
+방식별 허용 도구(설계안 9.2절):
+
+| 방식 | 허용 도구 |
+|---|---|
+| A, C, C-2 | 전체 |
+| B | 없음 |
+| C-1 | `capture` 제외 |
+
+모르는 방식은 무효 라운드다. 도구마다 출력에 반드시 들어갈 내용(`must_include`)이 있고, 실험망 테스트에서 `tools.missing_parts(tool, output)`로 확인한다. curl은 종료 코드, HTTP 상태, 단계별 시간 다섯 개(`time_namelookup`, `time_connect`, `time_appconnect`, `time_starttransfer`, `time_total`)가 출력에 있어야 한다. `-v` 진행 기록은 curl 버전마다 형식이 달라 출력으로 확인하지 않고, 실험망의 `run_probe` 테스트에서 argv에 `-v`가 들어가는지 확인한다.
 
 ## 4. Diagnoser → 심판: `Diagnosis`
 
@@ -101,7 +148,7 @@ python -m pytest tests                          # 심판 테스트
 - `stage`는 `DNS | 경로 | TCP | TLS | HTTP | 차단` 중 하나이고, `cause`는 장애 목록의 원인 이름을 쓴다. 영어 별칭(`path`, `refused`, `packet loss` 등)도 받는다.
 - `method`는 설계안 9.2절의 비교 대상이다: `A` 규칙 기반, `B` 도구 없는 LLM, `C` 전체, `C-1` 캡처 제외, `C-2` 요약기 제외.
 - `model`은 반드시 채운다. Solar와 GLM의 숫자가 섞이지 않게 하기 위해서다.
-- **근거 참조 형식**: `probe:<probe_id>`는 명령 출력 전체를, `pcap:<probe_id>#<n>` 또는 `#<n>-<m>`은 캡처 안의 패킷 번호를 가리킨다. `trace`에는 클라이언트 컨테이너에서 실행한 원본 출력을 그대로 넣는다.
+- **근거 참조 형식**: `probe:<probe_id>`는 명령 출력 전체를, `pcap:<probe_id>#<n>` 또는 `#<n>-<m>`은 캡처 안의 패킷 번호를 가리킨다. 번호는 도구 창구가 붙인 것이다. `trace`는 옛 형식과 호환하려고 남긴 칸이며 채점에 쓰지 않는다. 근거의 존재와 지지는 창구 기록(라운드 기록의 `probes`)으로 판정한다.
 
 ## 5. 심판 → Breaker: `BreakerFeedback`
 
@@ -130,7 +177,7 @@ python -m pytest tests                          # 심판 테스트
 - 심은 장애마다 진단 하나를 짝짓는다. 단계와 원인이 모두 맞는 짝을 먼저 정하고, 남은 것끼리 단계만 맞는 짝을 정한다. 진단 하나가 두 장애를 동시에 맞힐 수는 없다.
 - 짝이 없는 진단은 **오탐**이다. 단, 관측 불가 장애와 짝지어진 진단은 오탐이 아니다.
 - **근거 판정**은 인용 하나마다 따로 한다.
-  - **존재**: 해당 검사가 `trace`에 있는지, 패킷 번호가 캡처의 패킷 수 범위 안에 있는지 본다.
+  - **존재**: 해당 검사가 도구 창구 기록(`probes`)에 있는지, 패킷 번호가 캡처의 패킷 수 범위 안에 있는지 본다.
   - **지지**: 인용된 출력에 *진단이 주장한 원인*의 신호가 있는지 본다. 예를 들어 연결 거부라면 `Connection refused`나 `RST`다. 신호 목록은 `faults.py`의 `signals`에 있다. 자동으로 판정하지 못한 인용은 **수동 확인 필요(?)**로 표시하고 유효율 분자에 넣지 않는다.
 - 지표는 단계 정확도, 원인 정확도, 오탐, 근거 유효율, 검사 수, 진단 시간(심판 측정, 중앙값과 p95), LLM 호출 수와 토큰이다. 비율은 `23/30 (77%)`처럼 개수와 함께 적는다.
 

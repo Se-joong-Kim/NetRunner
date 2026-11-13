@@ -34,6 +34,8 @@ uv run ruff format
 - `contracts.py`: 모듈 사이에 오가는 모든 데이터 클래스. 각 `from_dict`가 필수 키와 타입을 검사하고 `ContractError`를 낸다.
 - `breaker.py`, `lab.py`, `diagnoser.py`: 담당자가 구현할 경계. 각각 `typing.Protocol`(`Breaker`, `Lab`, `Diagnoser`)과 그 자리를 대신하는 스탠드인(`FixedBreaker`, `MockLab`, `ReplayDiagnoser`)이 같이 있다. 실제 구현이 생기면 `Referee(lab=..., diagnoser=...)`에 같은 형태로 꽂는다.
 - `docker_lab.py`: `Lab`의 실제 구현(Docker Compose 실험망, D2·T2). `__main__.py`의 `LAB_IMPLS`에 등록해 `run --impl`로 고른다.
+- `tools.py`: Diagnoser가 쓰는 검사 도구 목록의 단일 출처(이름, 인자, 허용 값, LLM용 설명, 방식별 묶음).
+- `toolbox.py`: 심판이 라운드마다 만들어 Diagnoser에 넘기는 도구 창구. 인자·한도를 검사하고 실제 출력을 기록하며, 채점은 이 기록으로만 한다. 실험망 쪽은 `lab.py`의 `ProbeRunner.run_probe` 하나를 구현한다.
 - `faults.py`: 장애 16종의 단일 출처. 정답 라벨, 매개변수 범위, 관측 차단 여부, 근거 지지 판정용 신호를 가진다. 검증, 채점, 보고서가 모두 여기서 읽는다.
 - `validate.py`(제안 검사), `scoring.py`(채점), `report.py`(지표와 HTML): `referee.py`가 조립한다.
 - `config/lab.json`: 실험망 주소. 실험망 담당이 관리한다.
@@ -41,7 +43,7 @@ uv run ruff format
 
 ### 지켜야 할 경계
 
-- Diagnoser에게는 `RoundBrief`(라운드 ID, URL, 증상, 한도)만 넘긴다. 시나리오 ID, 장애, 주입 로그, 정답, `note`는 넘기지 않는다. `round_id`는 시나리오와 무관한 난수다.
+- Diagnoser에게는 `RoundBrief`(라운드 ID, URL, 증상, 한도)와 도구 창구만 넘긴다. 시나리오 ID, 장애, 주입 로그, 정답, `note`는 넘기지 않는다. `round_id`는 시나리오와 무관한 난수다.
 - 라운드가 무효여도 `reset`과 정상화 확인은 반드시 실행한다. 정상화가 확인되지 않으면 다음 라운드를 돌리지 않는다.
 - 실험망 함수가 예외를 내도 라운드 기록이 깨지지 않게 실패로 기록한다.
 - Breaker가 낸 시나리오는 `origin`을 항상 `breaker`로 바꿔 기록하고, 고정 세트(`fixed`) 라운드는 Breaker의 입력 기록에서 뺀다.

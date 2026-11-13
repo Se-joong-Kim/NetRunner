@@ -174,6 +174,37 @@ class Probe:
 
 
 @dataclass
+class ProbeResult:
+    """실험망이 검사 한 건을 실행한 결과(실험망 → 도구 창구).
+
+    ok는 실험망이 명령을 실행했는지다. 연결 거부처럼 네트워크가 실패한
+    결과도 ok=True이고 그 실패는 output에 담긴다. error에는 장애 정보를
+    넣지 않는다.
+    """
+
+    ok: bool
+    output: str = ""
+    elapsed_ms: int = 0
+    packets: int | None = None
+    file: str | None = None
+    error: str = ""
+
+
+@dataclass
+class ProbeView:
+    """도구 창구가 Diagnoser에게 돌려주는 검사 결과.
+
+    probe_id는 실행된 검사에만 붙고, 거부된 호출은 None과 error를 갖는다.
+    """
+
+    probe_id: str | None
+    output: str = ""
+    packets: int | None = None
+    file: str | None = None
+    error: str = ""
+
+
+@dataclass
 class Evidence:
     """진단이 든 근거 하나: 검사 참조와 그 검사가 보여 준다는 주장."""
 
