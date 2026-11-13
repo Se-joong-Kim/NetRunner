@@ -10,7 +10,7 @@
   "trace": [
     {"probe_id": "p1", "tool": "curl", "args": {"url": "http://shop.lab/"},
      "output": "curl: (7) Failed to connect to shop.lab port 80 after 2 ms: Connection refused", "elapsed_ms": 4},
-    {"probe_id": "p3", "tool": "tcpdump", "args": {"filter": "tcp port 80"},
+    {"probe_id": "p3", "tool": "capture", "args": {"url": "http://shop.lab/"},
      "output": "#1 10.20.0.2 > 10.20.0.10 [S]\n#2 10.20.0.10 > 10.20.0.2 [R.]", "elapsed_ms": 1100, "packets": 2}
   ],
   "llm_calls": 5,

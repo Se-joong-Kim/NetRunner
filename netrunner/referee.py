@@ -24,8 +24,10 @@ from .contracts import (
     Scenario,
 )
 from .diagnoser import Diagnoser
-from .lab import Lab
+from .lab import Lab, ProbeRunner
 from .scoring import score
+from .toolbox import Toolbox
+from .tools import tools_for_method
 from .validate import LabInfo, validate
 
 
@@ -39,8 +41,12 @@ class Referee:
         lab_info: LabInfo,
         limits: Limits | None = None,
         records_path: str | Path | None = None,
+        runner: ProbeRunner | None = None,
     ):
         self.lab = lab
+        # 검사 도구를 실행할 쪽. 진입점이 라운드마다 바꿀 수 있다.
+        # 없으면 도구 없이 진단한다.
+        self.runner = runner
         self.diagnoser = diagnoser
         self.lab_info = lab_info
         self.limits = limits or Limits()
@@ -66,6 +72,9 @@ class Referee:
             "answer": asdict(scenario),
             "brief": None,
             "diagnosis": None,
+            # 도구 창구가 기록한 실제 검사(채점 근거)와 거부된 호출
+            "probes": [],
+            "rejected_calls": [],
             "score": None,
             "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "finished_at": None,
@@ -110,23 +119,42 @@ class Referee:
             if not step("verify_symptom", self.lab.verify_symptom, scenario):
                 return end("invalid", "증상 재현 실패")
 
-            # 4. 진단: Diagnoser는 brief만 본다.
+            # 4. 진단: Diagnoser는 brief와 도구 창구만 받는다.
+            allowed = tools_for_method(self.diagnoser.method)
+            if allowed is None:
+                return end("invalid", f"알 수 없는 진단 방식: {self.diagnoser.method}")
             brief = RoundBrief(round_id, scenario.target_url, scenario.complaint, self.limits)
             rec["brief"] = asdict(brief)
+            toolbox = Toolbox(self.runner, self.lab_info, self.limits, allowed)
             t0 = time.monotonic()
             try:
-                diagnosis = self.diagnoser.diagnose(brief)
+                diagnosis = self.diagnoser.diagnose(brief, toolbox)
             except ContractError as e:
                 return end("invalid", f"진단 출력 형식 오류: {e}")
             except Exception as e:  # Diagnoser 쪽 오류로 실험망 복구가 빠지면 안 된다
                 return end("invalid", f"진단 실행 오류: {type(e).__name__}: {e}")
+            finally:
+                # 라운드 뒤에는 창구로 실험망을 만질 수 없게 닫고,
+                # 실행된 검사는 기록에 남긴다.
+                toolbox.close()
+                rec["probes"] = [asdict(p) for p in toolbox.record]
+                rec["rejected_calls"] = [asdict(c) for c in toolbox.rejected]
             elapsed = time.monotonic() - t0
             if diagnosis.round_id != round_id:
                 return end("invalid", "진단의 round_id가 brief와 다름")
             rec["diagnosis"] = asdict(diagnosis)
 
             # 5. 채점. 이 시점부터 정답(answer)을 공개해도 된다.
-            rec["score"] = asdict(score(scenario, v.observable, diagnosis, elapsed, self.limits))
+            rec["score"] = asdict(
+                score(
+                    scenario,
+                    v.observable,
+                    diagnosis,
+                    elapsed,
+                    self.limits,
+                    probes=toolbox.record,
+                )
+            )
             return end("scored", "")
         finally:
             # 6. 복구와 정상화 확인. 실험망을 건드린 라운드는 무효여도 반드시 실행한다.
@@ -163,7 +191,8 @@ class Referee:
             return
         self.records_path.parent.mkdir(parents=True, exist_ok=True)
         with self.records_path.open("a", encoding="utf-8") as fp:
-            fp.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            # 거부된 호출의 인자는 Diagnoser가 낸 그대로라 JSON이 아닐 수 있다.
+            fp.write(json.dumps(rec, ensure_ascii=False, default=repr) + "\n")
 
 
 def feedback_for(rec: dict) -> BreakerFeedback | None:

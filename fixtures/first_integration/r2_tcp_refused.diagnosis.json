@@ -15,9 +15,9 @@
   "trace": [
     {"probe_id": "p1", "tool": "curl", "args": {"url": "http://shop.lab/"},
      "output": "curl: (7) Failed to connect to shop.lab port 80 after 2 ms: Connection refused\ntime_namelookup=0.002 time_connect=0.000 http_code=000", "elapsed_ms": 4},
-    {"probe_id": "p2", "tool": "dig", "args": {"name": "shop.lab"},
+    {"probe_id": "p2", "tool": "dig", "args": {"domain": "shop.lab"},
      "output": ";; ANSWER SECTION:\nshop.lab.\t\t300\tIN\tA\t10.20.0.10\n\n;; Query time: 1 msec\n;; SERVER: 10.20.0.53#53(10.20.0.53) (UDP)", "elapsed_ms": 3},
-    {"probe_id": "p3", "tool": "tcpdump", "args": {"filter": "host 10.20.0.10 and tcp port 80", "during": "curl http://shop.lab/"},
+    {"probe_id": "p3", "tool": "capture", "args": {"url": "http://shop.lab/"},
      "output": "connection 10.20.0.2:51514 -> 10.20.0.10:80\n#1 0.000000 10.20.0.2 > 10.20.0.10 [S] seq=0\n#2 0.000412 10.20.0.10 > 10.20.0.2 [R.] RST from server\nhandshake: not completed, RST by server after 0.4 ms",
      "elapsed_ms": 1200, "packets": 2, "file": "captures/fi02.pcap"}
   ],

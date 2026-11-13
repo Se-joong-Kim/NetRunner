@@ -7,7 +7,7 @@ from netrunner.breaker import FixedBreaker
 from netrunner.contracts import ContractError, Diagnosis, Limits, Scenario, read_json
 from netrunner.diagnoser import ReplayDiagnoser
 from netrunner.faults import FAULTS
-from netrunner.lab import MockLab
+from netrunner.lab import MockLab, ReplayRunner
 from netrunner.referee import Referee, feedback_for
 from netrunner.report import render_html, summarize
 from netrunner.scoring import score
@@ -60,6 +60,7 @@ def score_of(sc: dict, diag: dict, observable=(True,), **kw):
         list(observable),
         Diagnosis.from_dict(diag),
         kw.pop("elapsed_s", 1.0),
+        probes=Diagnosis.from_dict(diag).trace,
         **kw,
     )
 
@@ -228,12 +229,12 @@ def test_wrong_cause_fake_packet_and_unsupported_false_positive():
 
 def test_stage_aliases_and_wrong_stage():
     sc = scenario(faults=[{"id": "N2", "params": {"loss_pct": 10}}])
-    ok = score(sc, [True], diagnosis([{"stage": "path", "cause": "packet loss"}]), 1.0)
+    ok = score(sc, [True], diagnosis([{"stage": "path", "cause": "packet loss"}]), 1.0, probes=[])
     assert ok.faults[0].verdict == "correct"
-    wrong = score(sc, [True], diagnosis([{"stage": "TCP", "cause": "연결 거부"}]), 1.0)
+    wrong = score(sc, [True], diagnosis([{"stage": "TCP", "cause": "연결 거부"}]), 1.0, probes=[])
     assert wrong.faults[0].verdict == "stage_wrong" and wrong.faults[0].finding == 0
     assert wrong.false_positives == ["TCP / 연결 거부"]
-    nothing = score(sc, [True], diagnosis([]), 1.0)
+    nothing = score(sc, [True], diagnosis([]), 1.0, probes=[])
     assert nothing.faults[0].verdict == "missed" and nothing.scored_faults == 1
 
 
@@ -244,7 +245,9 @@ def test_one_wrong_stage_finding_marks_only_one_fault_stage_wrong():
             {"id": "N1", "params": {"delay_ms": 200}},
         ]
     )
-    s = score(sc, [True, True], diagnosis([{"stage": "TCP", "cause": "연결 거부"}]), 1.0)
+    s = score(
+        sc, [True, True], diagnosis([{"stage": "TCP", "cause": "연결 거부"}]), 1.0, probes=[]
+    )
     assert sorted(f.verdict for f in s.faults) == ["missed", "stage_wrong"]
 
 
@@ -280,14 +283,16 @@ def test_malformed_diagnosis_is_contract_error(patch):
 class Boom:
     model, method = "glm-4.5", "C"
 
-    def diagnose(self, brief):
+    def diagnose(self, brief, tools):
         raise TimeoutError("GLM 응답 없음")
 
 
-def run_one(lab=None, diag=None, sc=None):
+def run_one(lab=None, diag=None, sc=None, runner=None):
     lab = lab or MockLab()
     diag = diag if diag is not None else ReplayDiagnoser([R2_DIAG])
-    return Referee(lab, diag, LAB).run_round(Scenario.from_dict(sc or R2_SC)), lab
+    runner = runner or ReplayRunner.from_diagnoses([R2_DIAG])
+    referee = Referee(lab, diag, LAB, runner=runner)
+    return referee.run_round(Scenario.from_dict(sc or R2_SC)), lab
 
 
 def test_round_hides_answer_from_diagnoser():
@@ -296,9 +301,9 @@ def test_round_hides_answer_from_diagnoser():
     class Spy:
         model, method = "fixture", "C"
 
-        def diagnose(self, brief):
+        def diagnose(self, brief, tools):
             seen.append(brief)
-            return ReplayDiagnoser([R2_DIAG]).diagnose(brief)
+            return ReplayDiagnoser([R2_DIAG]).diagnose(brief, tools)
 
     rec, lab = run_one(diag=Spy())
     assert rec["status"] == "scored" and rec["reset_verified"]
@@ -345,7 +350,8 @@ def test_rejected_proposal_never_touches_lab():
 
 def test_match_retries_rejected_proposals_and_stops_on_dirty_lab():
     good = Scenario.from_dict(X1_SC)
-    recs = Referee(MockLab(), ReplayDiagnoser([X1_DIAG]), LAB).run_match(
+    x1_runner = ReplayRunner.from_diagnoses([X1_DIAG])
+    recs = Referee(MockLab(), ReplayDiagnoser([X1_DIAG]), LAB, runner=x1_runner).run_match(
         FixedBreaker([Scenario.from_dict(X3_SC), good]), rounds=1
     )
     assert [r["status"] for r in recs] == ["rejected", "scored"]
@@ -357,7 +363,8 @@ def test_match_retries_rejected_proposals_and_stops_on_dirty_lab():
 
 def test_breaker_cannot_label_its_rounds_as_fixed_set():
     sc = Scenario.from_dict(dict(X1_SC, origin="fixed"))
-    recs = Referee(MockLab(), ReplayDiagnoser([X1_DIAG]), LAB).run_match(
+    x1_runner = ReplayRunner.from_diagnoses([X1_DIAG])
+    recs = Referee(MockLab(), ReplayDiagnoser([X1_DIAG]), LAB, runner=x1_runner).run_match(
         FixedBreaker([sc]), rounds=1
     )
     assert recs[0]["origin"] == "breaker" and feedback_for(recs[0]) is not None
@@ -366,7 +373,9 @@ def test_breaker_cannot_label_its_rounds_as_fixed_set():
 def test_feedback_only_for_breaker_rounds():
     rec, _ = run_one()
     assert feedback_for(rec) is None  # 고정 세트는 Breaker 입력에서 제외
-    rec, _ = run_one(diag=ReplayDiagnoser([X1_DIAG]), sc=X1_SC)
+    rec, _ = run_one(
+        diag=ReplayDiagnoser([X1_DIAG]), sc=X1_SC, runner=ReplayRunner.from_diagnoses([X1_DIAG])
+    )
     fb = feedback_for(rec)
     assert (
         fb.valid
@@ -467,3 +476,82 @@ def test_signal_auto_judgement(fault_id, params, output, expected):
 
     patterns = _signal_patterns(FAULTS[fault_id], params)
     assert any(_signal_hit(p, floor, output) for p, floor in patterns) is expected
+
+
+# ------------------------------------------------- 도구 창구 기록으로 채점
+
+
+class ToolUser:
+    """창구로 검사를 부르는 시험용 진단기. hook(brief, tools)가 동작을 정한다."""
+
+    model = "fixture"
+
+    def __init__(self, hook, method="C"):
+        self.hook, self.method, self.tools = hook, method, None
+
+    def diagnose(self, brief, tools):
+        self.tools = tools
+        return self.hook(brief, tools)
+
+
+def finding(ref):
+    return {"stage": "TCP", "cause": "연결 거부", "evidence": [{"ref": ref}]}
+
+
+def test_self_reported_trace_is_not_evidence():
+    fake = {"probe_id": "p1", "tool": "curl", "args": {}, "output": "Connection refused"}
+
+    def hook(brief, tools):
+        return Diagnosis.from_dict(
+            {
+                "round_id": brief.round_id,
+                "model": "fixture",
+                "method": "C",
+                "findings": [finding("probe:p1")],
+                "trace": [fake],
+            }
+        )
+
+    rec, _ = run_one(diag=ToolUser(hook))
+    assert rec["score"]["evidence"][0]["exists"] is False
+
+
+def test_probes_recorded_from_toolbox():
+    rec, _ = run_one()
+    assert [p["probe_id"] for p in rec["probes"]] == ["p1", "p2", "p3"]
+    assert rec["score"]["cause_correct"] == 1
+
+
+def test_unknown_method_is_invalid():
+    rec, _ = run_one(diag=ToolUser(lambda b, t: None, method="Z"))
+    assert rec["status"] == "invalid" and "진단 방식" in rec["invalid_reason"]
+    assert rec["reset_verified"] is True
+
+
+def test_method_b_gets_no_tools():
+    diag = ToolUser(lambda b, t: diagnosis([]), method="B")
+    run_one(diag=diag)
+    assert diag.tools.specs() == []
+
+
+def test_probes_kept_when_diagnoser_raises():
+    def hook(brief, tools):
+        tools.call("dig", {"domain": "shop.lab"})
+        raise TimeoutError("GLM 응답 없음")
+
+    rec, _ = run_one(diag=ToolUser(hook))
+    assert len(rec["probes"]) == 1
+    assert rec["status"] == "invalid" and rec["reset_verified"] is True
+
+
+def test_toolbox_closed_after_round():
+    diag = ToolUser(lambda b, t: diagnosis([]))
+    run_one(diag=diag)
+    assert diag.tools.call("dig", {"domain": "shop.lab"}).probe_id is None
+
+
+def test_report_falls_back_to_old_trace():
+    rec, _ = run_one()
+    old = dict(rec, diagnosis=dict(rec["diagnosis"], trace=rec["probes"]))
+    del old["probes"]
+    assert "after 2 ms: Connection refused" in render_html([old])

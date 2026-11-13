@@ -205,7 +205,9 @@ def _round_card(r: dict) -> str:
             out.append(f"<tr><td>-</td><td></td><td class='bad'>오탐</td><td>{_e(fp)}</td></tr>")
         out.append("</table></div>")
 
-        probes = {p["probe_id"]: p for p in r["diagnosis"]["trace"]}
+        # 창구 기록이 근거다. probes가 없는 옛 기록만 Diagnoser가 적은 trace를 쓴다.
+        source = r["probes"] if "probes" in r else r["diagnosis"]["trace"]
+        probes = {p["probe_id"]: p for p in source}
         cited = [
             pid for pid in dict.fromkeys(c["probe_id"] for c in s["evidence"]) if pid in probes
         ]
