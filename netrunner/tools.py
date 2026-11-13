@@ -162,7 +162,8 @@ TOOLS: dict[str, Tool] = {
         ),
         Tool(
             "tracepath",
-            "클라이언트에서 host까지의 홉 목록과 경로에서 보낼 수 있는 최대 크기(pmtu)를 보여 준다.",
+            "클라이언트에서 host까지의 홉 목록과 "
+            "경로에서 보낼 수 있는 최대 크기(pmtu)를 보여 준다.",
             (Arg("host", "host", True, "실험망 도메인 또는 실험망 IP"),),
             (r"pmtu \d+",),
         ),
