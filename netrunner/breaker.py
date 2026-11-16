@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .breaker_prompt import build_prompt, with_rejection
-from .contracts import BreakerFeedback, Scenario
+from .contracts import BreakerFeedback, FaultSpec, Scenario
 from .faults import FAULTS
 from .validate import LabInfo, validate
 
@@ -46,11 +46,16 @@ class BreakerError(RuntimeError):
     """정해진 횟수 안에 유효한 제안을 만들지 못했다."""
 
 
+class CompletionError(RuntimeError):
+    """complete 함수가 호출에 실패했다(네트워크, API 오류, 응답 잘림 등)."""
+
+
 @dataclass
 class ProposalStats:
     """모델 호출 한 번마다 결과를 세는 기록. 제안 품질 보고에 쓴다."""
 
     calls: int = 0
+    api_errors: int = 0  # 호출 자체가 실패함(CompletionError)
     unparsable: int = 0  # JSON이나 시나리오 형식이 아님
     duplicate: int = 0  # 이미 낸 장애 조합·매개변수와 같음
     invalid: int = 0  # 심판 검증 규칙에 걸림
@@ -79,16 +84,16 @@ def parse_proposal(text: str) -> dict:
     raise ValueError("JSON 객체가 없음")
 
 
-def _signature(sc: Scenario) -> tuple:
+def _signature(faults: list[FaultSpec], domain: str) -> tuple:
     """중복 판정 키: 장애 ID와 실제 적용되는 매개변수 값.
 
     생략된 선택 매개변수는 None, 생략된 domain은 대상 도메인으로 본다.
     증상 문장과 메모는 보지 않는다.
     """
     items = []
-    for f in sc.faults:
+    for f in faults:
         names = FAULTS[f.id].params if f.id in FAULTS else f.params
-        values = {n: f.params.get(n, sc.domain if n == "domain" else None) for n in sorted(names)}
+        values = {n: f.params.get(n, domain if n == "domain" else None) for n in sorted(names)}
         items.append((f.id, json.dumps(values, sort_keys=True)))
     return tuple(sorted(items))
 
@@ -118,19 +123,35 @@ class LLMBreaker:
     def propose(self, history: list[BreakerFeedback]) -> Scenario:
         """지난 라운드를 반영한 프롬프트로 제안을 받아 검사를 통과한 것을 낸다.
 
-        거부 사유는 다음 시도의 프롬프트에 붙는다. max_attempts번 안에
+        채점이 끝난 유효 라운드의 장애 조합도 중복으로 본다(프롬프트의 "반복하지
+        않는다"와 같은 기준). 거부된 라운드는 빼는데, 그래야 같은 장애를 증상만
+        고쳐 다시 낼 수 있다. 거부 사유는 다음 시도의 프롬프트에 붙는다. 호출
+        실패도 한 번의 시도로 세며 사유는 붙이지 않는다. max_attempts번 안에
         통과하지 못하면 BreakerError.
         """
+        domain = Scenario(
+            scenario_id="", target_url=self._target_url, faults=[], complaint=""
+        ).domain
+        self._seen.update(_signature(fb.faults, domain) for fb in history if fb.valid)
         prompt = build_prompt(history, self._target_url, self._lab)
         reason = ""
+        last_error = ""
         for _ in range(self._max_attempts):
-            text = self._complete(with_rejection(prompt, reason) if reason else prompt)
+            try:
+                text = self._complete(with_rejection(prompt, reason) if reason else prompt)
+            except CompletionError as e:
+                self.stats.calls += 1
+                self.stats.api_errors += 1
+                reason = ""
+                last_error = str(e)
+                continue
             self.stats.calls += 1
             sc, reason = self._check(text)
             if sc is not None:
                 self.stats.accepted += 1
                 return sc
-        raise BreakerError(f"{self._max_attempts}회 시도 안에 유효한 제안 없음: {reason}")
+        detail = reason or f"API 오류: {last_error}"
+        raise BreakerError(f"{self._max_attempts}회 시도 안에 유효한 제안 없음: {detail}")
 
     def _check(self, text: str) -> tuple[Scenario | None, str]:
         """출력 하나를 시나리오로 바꿔 검사한다. (시나리오, '') 또는 (None, 사유)."""
@@ -153,7 +174,7 @@ class LLMBreaker:
             )
             if not all(isinstance(f.id, str) and isinstance(f.params, dict) for f in sc.faults):
                 raise ValueError("장애 ID는 문자열, params는 객체여야 함")
-            key = _signature(sc)
+            key = _signature(sc.faults, sc.domain)
         except (ValueError, TypeError) as e:
             self.stats.unparsable += 1
             return None, f"형식 오류: {e}"
