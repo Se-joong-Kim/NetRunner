@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from netrunner.breaker import FixedBreaker
+from netrunner.breaker import BreakerError, FixedBreaker
 from netrunner.contracts import ContractError, Diagnosis, Limits, Scenario, read_json
 from netrunner.diagnoser import ReplayDiagnoser
 from netrunner.faults import FAULTS
@@ -360,6 +360,48 @@ def test_match_retries_rejected_proposals_and_stops_on_dirty_lab():
     dirty = Referee(MockLab(broken_reset=True), ReplayDiagnoser([]), LAB)
     recs = dirty.run_match(FixedBreaker([good, good]), rounds=2)
     assert len(recs) == 1 and recs[0]["reset_verified"] is False
+
+
+@pytest.mark.parametrize("completed", [0, 1])
+def test_match_logs_breaker_failure_and_preserves_completed_rounds(tmp_path, completed):
+    lab = MockLab()
+    path = tmp_path / "rounds.jsonl"
+    proposals = iter([Scenario.from_dict(R2_SC)] * completed)
+    calls_at_failure = []
+
+    class FailingBreaker:
+        def propose(self, history):
+            assert len(history) == len(calls_at_failure)
+            calls_at_failure.append(list(lab.calls))
+            proposal = next(proposals, None)
+            if proposal is None:
+                raise BreakerError("adapter-private-detail")
+            return proposal
+
+    referee = Referee(
+        lab,
+        ReplayDiagnoser([R2_DIAG] * completed),
+        LAB,
+        records_path=path,
+        runner=ReplayRunner.from_diagnoses([R2_DIAG] * completed),
+    )
+    records = referee.run_match(FailingBreaker(), rounds=3)
+
+    assert [r["status"] for r in records] == ["scored"] * completed + ["proposal_failed"]
+    assert len(calls_at_failure) == completed + 1 and lab.calls == calls_at_failure[-1]
+    failure = records[-1]
+    assert failure["scenario_id"] is None and failure["answer"] is None
+    assert failure["reset_verified"] is None and failure["score"] is None
+    assert failure["lab_log"] == [] and feedback_for(failure) is None
+    assert failure["started_at"] <= failure["finished_at"]
+    saved = path.read_text(encoding="utf-8")
+    assert [json.loads(line) for line in saved.splitlines()] == records
+    assert "adapter-private-detail" not in saved
+    rows = summarize(records)
+    assert [r["rounds"] for r in rows] == ["1/1 (100%)"] * completed
+    assert [r["repro"] for r in rows] == ["1/1 (100%)"] * completed
+    page = render_html(records)
+    assert f"라운드 {completed}개" in page and "Breaker 제안 실패 1개" in page
 
 
 def test_breaker_cannot_label_its_rounds_as_fixed_set():

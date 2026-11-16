@@ -13,6 +13,8 @@ import statistics
 from collections import defaultdict
 from pathlib import Path
 
+from . import PROPOSAL_FAILED
+
 VERDICT_KO = {
     "correct": "정답",
     "cause_wrong": "원인 틀림",
@@ -47,11 +49,11 @@ def _reproduced(rec: dict) -> bool:
 def summarize(records: list[dict]) -> list[dict]:
     """모델·방식·세트별 지표.
 
-    검증에서 거부된 제안(rejected)은 Diagnoser가 돌지 않았으므로 뺀다.
+    검증에서 거부된 제안과 Breaker의 제안 실패는 지표에서 뺀다.
     """
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in records:
-        if r["status"] != "rejected":
+        if r["status"] not in ("rejected", PROPOSAL_FAILED):
             groups[(r["model"], r["method"], r["origin"])].append(r)
 
     rows = []
@@ -167,6 +169,12 @@ def _mark(v) -> str:
 
 
 def _round_card(r: dict) -> str:
+    if r["status"] == PROPOSAL_FAILED:
+        return (
+            f"<div class='card'><h2>Breaker 제안 실패 · {_e(r['round_id'])}</h2>"
+            f"<p class='warn'>{_e(r['invalid_reason'])}</p>"
+            f"<p class='muted'>{_e(r['finished_at'])}</p></div>"
+        )
     ans = r["answer"]
     head = (
         f"<h2>라운드 {_e(r['round_id'])} · {_e(ans['scenario_id'])} "
@@ -256,6 +264,8 @@ def render_html(records: list[dict], rows: list[dict] | None = None) -> str:
     """라운드 기록 전체를 하나의 HTML 페이지로 만든다."""
     rows = summarize(records) if rows is None else rows
     rejected = sum(r["status"] == "rejected" for r in records)
+    failed = sum(r["status"] == PROPOSAL_FAILED for r in records)
+    failure_note = f" · Breaker 제안 실패 {failed}개" if failed else ""
     table = [
         "<div class='wrap'><table><tr>"
         + "".join(f"<th>{_e(t)}</th>" for _, t in COLUMNS)
@@ -269,7 +279,7 @@ def render_html(records: list[dict], rows: list[dict] | None = None) -> str:
         f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>NetRunner 라운드 결과</title><style>{_CSS}</style></head><body>"
         f"<h1>NetRunner 라운드 결과</h1>"
-        f"<p class='muted'>측정 위치: 클라이언트 컨테이너 · 라운드 {len(records)}개 · "
-        f"검증에서 거부된 제안 {rejected}개</p>"
+        f"<p class='muted'>측정 위치: 클라이언트 컨테이너 · 라운드 {len(records) - failed}개 · "
+        f"검증에서 거부된 제안 {rejected}개{failure_note}</p>"
         f"{''.join(table)}{cards}</body></html>"
     )
