@@ -21,7 +21,7 @@ class Diagnoser(Protocol):
 
     # 라운드 기록의 모델·방식 이름은 여기서만 가져온다.
     # 진단 실패 라운드도 이 모델의 실패로 집계된다.
-    model: str  # 예: "solar-pro2", "glm-4.5"
+    model: str  # 예: "solar-pro2", "glm-5.3-flash"
     method: str  # 설계안 9.2절: "A" | "B" | "C" | "C-1" | "C-2"
 
     def diagnose(self, brief: RoundBrief, tools: Toolbox) -> Diagnosis:

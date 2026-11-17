@@ -128,7 +128,7 @@ Diagnoser는 검사를 **심판이 라운드마다 만들어 넘기는 도구 �
 ```json
 {
   "round_id": "3f9a1c0e",
-  "model": "glm-4.5",
+  "model": "glm-5.3-flash",
   "method": "C",
   "findings": [
     {"stage": "TCP", "cause": "연결 거부",
