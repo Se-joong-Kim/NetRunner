@@ -185,5 +185,4 @@ class LLMBreaker:
         if not v.ok:
             self.stats.invalid += 1
             return None, "; ".join(v.errors)
-        self._seen.add(key)
         return sc, ""

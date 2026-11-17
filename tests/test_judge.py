@@ -282,7 +282,7 @@ def test_malformed_diagnosis_is_contract_error(patch):
 
 
 class Boom:
-    model, method = "glm-4.5", "C"
+    model, method = "glm-5.3-flash", "C"
 
     def diagnose(self, brief, tools):
         raise TimeoutError("GLM 응답 없음")
@@ -447,7 +447,7 @@ def test_cited_probe_output_embedded_once():
 
 
 def test_diagnoser_failures_count_against_that_model():
-    good = ReplayDiagnoser([dict(R2_DIAG, model="glm-4.5")])
+    good = ReplayDiagnoser([dict(R2_DIAG, model="glm-5.3-flash")])
     rows = summarize([run_one(diag=good)[0], run_one(diag=Boom())[0]])
     assert len(rows) == 1 and rows[0]["rounds"] == "1/2 (50%)"
 
