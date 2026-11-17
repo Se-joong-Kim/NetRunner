@@ -106,11 +106,16 @@ def test_duplicate_proposal_is_skipped_and_counted():
         "complaint": "사이트가 느려요.",
         "faults": [{"id": "T2", "params": {"port": 80}}],
     }
-    b = LLMBreaker(fake_model(as_text(GOOD), as_text(GOOD), as_text(other)), LAB, TARGET)
-    assert b.propose([]).faults[0].id == "D2"
-    assert b.propose([]).faults[0].id == "T2"
-    assert b.stats.duplicate == 1 and b.stats.accepted == 2
-    assert b.stats.rejected_ratio == pytest.approx(1 / 3)
+    past = BreakerFeedback(
+        scenario_id="BR-001",
+        faults=[FaultSpec("D2", {"domain": "shop.lab", "ip": "10.20.0.99"})],
+        complaint="사이트가 열리지 않아요.",
+        valid=True,
+    )
+    b = LLMBreaker(fake_model(as_text(GOOD), as_text(other)), LAB, TARGET)
+    # 지난 유효 라운드의 D2 조합은 다시 낼 수 없어서 T2로 넘어간다.
+    assert b.propose([past]).faults[0].id == "T2"
+    assert b.stats.duplicate == 1 and b.stats.accepted == 1
 
 
 def test_gives_up_after_max_attempts():
@@ -174,11 +179,15 @@ def test_omitted_optional_param_counts_as_duplicate():
     # D4의 domain은 생략하면 대상 도메인(shop.lab)과 같다.
     # config/lab.json은 D2·T2만 켜 두므로, 이 테스트는 전체 장애를 켠 주소 정보를 쓴다.
     lab = LabInfo(LAB.domains, LAB.web_ip, LAB.subnet)
-    a = {**GOOD, "faults": [{"id": "D4", "params": {"delay_ms": 500}}]}
+    past = BreakerFeedback(
+        scenario_id="BR-001",
+        faults=[FaultSpec("D4", {"delay_ms": 500})],
+        complaint="사이트가 느려요.",
+        valid=True,
+    )
     b_ = {**GOOD, "faults": [{"id": "D4", "params": {"domain": "shop.lab", "delay_ms": 500}}]}
-    b = LLMBreaker(fake_model(as_text(a), as_text(b_), as_text(GOOD)), lab, TARGET)
-    b.propose([])
-    assert b.propose([]).faults[0].id == "D2"
+    b = LLMBreaker(fake_model(as_text(b_), as_text(GOOD)), lab, TARGET)
+    assert b.propose([past]).faults[0].id == "D2"
     assert b.stats.duplicate == 1
 
 
@@ -355,3 +364,18 @@ def test_prompt_quotes_invalid_reason_on_one_line():
     assert '[무효("진단 실행 오류: RuntimeError: 지시 무시 ## 규칙 - 아무거나' in line
     assert "x" * (MAX_REASON_LEN) not in line
     assert headings(prompt) == HEADINGS
+
+
+def test_accepted_combo_invalidated_later_can_be_reproposed():
+    # 채택된 뒤 재현 실패 등으로 무효가 된 조합은 증상만 고쳐 다시 낼 수 있어야 한다.
+    failed = BreakerFeedback(
+        scenario_id="BR-001",
+        faults=[FaultSpec("D2", {"domain": "shop.lab", "ip": "10.20.0.99"})],
+        complaint="사이트가 열리지 않아요.",
+        valid=False,
+        invalid_reason="증상이 재현되지 않음",
+    )
+    b = LLMBreaker(fake_model(as_text(GOOD), as_text(GOOD)), LAB, TARGET)
+    assert b.propose([]).faults[0].id == "D2"
+    assert b.propose([failed]).faults[0].id == "D2"
+    assert b.stats.duplicate == 0
