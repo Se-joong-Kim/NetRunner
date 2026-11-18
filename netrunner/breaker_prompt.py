@@ -102,13 +102,18 @@ def build_prompt(
     target_url: str,
     lab: LabInfo,
     faults: Mapping[str, Fault] = FAULTS,
+    exhausted: Collection[str] = frozenset(),
+    max_faults: int = MAX_FAULTS,
 ) -> str:
     """지난 라운드와 실험망 정보로 Breaker 프롬프트 한 문자열을 만든다.
 
     history에는 고정 세트 라운드가 없어야 한다(심판의 feedback_for가 거른다).
+    exhausted에 든 장애 ID는 장애 목록에서 뺀다. 오탐 라벨 판정은 그대로
+    전체 장애 목록을 쓴다. max_faults는 실험망이 한 라운드에 켤 수 있는
+    동시 장애 수다.
     """
     target = Scenario(scenario_id="", target_url=target_url, faults=[], complaint="")
-    enabled = [faults[i] for i in lab.enabled_faults if i in faults]
+    enabled = [faults[i] for i in lab.enabled_faults if i in faults and i not in exhausted]
     conflicts = "; ".join(str(sorted(g)) for g in CONFLICT_GROUPS)
     recent = history[-HISTORY_LIMIT:]
     known = frozenset(f.label for f in faults.values())
@@ -119,7 +124,7 @@ def build_prompt(
             "장애를 골라 조합하고, 원인이 드러나지 않는 사용자 불만 한 문장을 쓴다.",
             "",
             "## 규칙",
-            f"- 장애는 1~{MAX_FAULTS}개. 아래 목록의 ID만 쓴다.",
+            f"- 장애는 1~{max_faults}개. 아래 목록의 ID만 쓴다.",
             f"- 함께 걸 수 없는 조합: {conflicts}",
             f"- 대상 URL: {target_url} (도메인 {target.domain}, 포트 {target.port})",
             f"- 증상 문장은 {MAX_COMPLAINT_LEN}자 이내. 다음 단어를 쓰지 않는다: "

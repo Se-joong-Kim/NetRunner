@@ -14,8 +14,8 @@ from typing import Protocol
 
 from .breaker_prompt import build_prompt, with_rejection
 from .contracts import BreakerFeedback, FaultSpec, Scenario
-from .faults import FAULTS
-from .validate import LabInfo, validate
+from .faults import FAULTS, Param
+from .validate import MAX_FAULTS, LabInfo, validate
 
 
 class Breaker(Protocol):
@@ -59,6 +59,8 @@ class ProposalStats:
     unparsable: int = 0  # JSON이나 시나리오 형식이 아님
     duplicate: int = 0  # 이미 낸 장애 조합·매개변수와 같음
     invalid: int = 0  # 심판 검증 규칙에 걸림
+    masked: int = 0  # 앞 단계 장애에 가려 클라이언트에서 볼 수 없음
+    over_limit: int = 0  # 실험망이 동시에 켤 수 있는 장애 수를 넘음
     accepted: int = 0
 
     @property
@@ -98,12 +100,24 @@ def _signature(faults: list[FaultSpec], domain: str) -> tuple:
     return tuple(sorted(items))
 
 
+def _is_fixed(name: str, p: Param) -> bool:
+    """매개변수 값이 대상 URL에서 정해지는지 본다(도메인은 대상 도메인, 포트는 대상 포트).
+
+    cert_domain처럼 다른 도메인을 고를 수 있는 값은 고정이 아니다. 장애 ID로
+    가리지 않고 Param.kind와 이름만 본다.
+    """
+    return p.kind == "port" or (p.kind == "domain" and name == "domain")
+
+
 class LLMBreaker:
     """텍스트 모델을 호출해 시나리오를 제안하는 Breaker.
 
     complete는 프롬프트를 받아 응답 문자열을 돌려주는 함수다. 모델 공급자와
     호출 방식은 이 함수를 만드는 진입점이 정한다. 시나리오 ID와 대상 URL은
     이 클래스가 정하고, 모델은 장애·증상·메모만 낸다.
+
+    max_faults는 실험망이 한 라운드에 켤 수 있는 동시 장애 수다. 진입점이
+    실험망 구현에 맞춰 넘긴다.
     """
 
     def __init__(
@@ -112,11 +126,13 @@ class LLMBreaker:
         lab: LabInfo,
         target_url: str,
         max_attempts: int = 3,
+        max_faults: int = MAX_FAULTS,
     ):
         self._complete = complete
         self._lab = lab
         self._target_url = target_url
         self._max_attempts = max_attempts
+        self._max_faults = max_faults
         self._seen: set[tuple] = set()
         self.stats = ProposalStats()
 
@@ -129,11 +145,15 @@ class LLMBreaker:
         실패도 한 번의 시도로 세며 사유는 붙이지 않는다. max_attempts번 안에
         통과하지 못하면 BreakerError.
         """
-        domain = Scenario(
-            scenario_id="", target_url=self._target_url, faults=[], complaint=""
-        ).domain
-        self._seen.update(_signature(fb.faults, domain) for fb in history if fb.valid)
-        prompt = build_prompt(history, self._target_url, self._lab)
+        target = Scenario(scenario_id="", target_url=self._target_url, faults=[], complaint="")
+        self._seen.update(_signature(fb.faults, target.domain) for fb in history if fb.valid)
+        prompt = build_prompt(
+            history,
+            self._target_url,
+            self._lab,
+            exhausted=self._exhausted(target),
+            max_faults=self._max_faults,
+        )
         reason = ""
         last_error = ""
         for _ in range(self._max_attempts):
@@ -152,6 +172,28 @@ class LLMBreaker:
                 return sc
         detail = reason or f"API 오류: {last_error}"
         raise BreakerError(f"{self._max_attempts}회 시도 안에 유효한 제안 없음: {detail}")
+
+    def _exhausted(self, target: Scenario) -> frozenset[str]:
+        """더 낼 수 없는 장애 ID 모음. 프롬프트 장애 목록에서 뺀다.
+
+        매개변수가 모두 고정된 장애는 서명이 하나뿐이다. 그 서명이 지난 유효
+        라운드에 있으면 한 장애만 내는 실험망에서는 더 낼 수 없다. 장애를 여럿
+        묶을 수 있으면(max_faults > 1) 다른 장애와 묶은 조합은 여전히 새 서명이
+        되므로 목록에서 빼지 않는다.
+        """
+        if self._max_faults != 1:
+            return frozenset()
+        out = set()
+        for fid, fault in FAULTS.items():
+            if not all(_is_fixed(n, p) for n, p in fault.params.items()):
+                continue
+            params = {
+                n: target.port if p.kind == "port" else target.domain
+                for n, p in fault.params.items()
+            }
+            if _signature([FaultSpec(fid, params)], target.domain) in self._seen:
+                out.add(fid)
+        return frozenset(out)
 
     def _check(self, text: str) -> tuple[Scenario | None, str]:
         """출력 하나를 시나리오로 바꿔 검사한다. (시나리오, '') 또는 (None, 사유)."""
@@ -185,4 +227,11 @@ class LLMBreaker:
         if not v.ok:
             self.stats.invalid += 1
             return None, "; ".join(v.errors)
+        if len(sc.faults) > self._max_faults:
+            self.stats.over_limit += 1
+            return None, f"동시 장애 {len(sc.faults)}개, 실험망 한도 {self._max_faults}개"
+        hidden = [f.id for f, seen in zip(sc.faults, v.observable, strict=True) if not seen]
+        if hidden:
+            self.stats.masked += 1
+            return None, f"앞 단계 장애에 가려 관측할 수 없음: {', '.join(hidden)}"
         return sc, ""
