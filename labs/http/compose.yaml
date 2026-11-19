@@ -1,10 +1,10 @@
 services:
   backend:
-    image: python:3.12-alpine
+    image: python:3.12-alpine@sha256:c5ba3deef00c7758561a0f03c26f44f10589263d40e732b8748e0d1f38f6dd89
     working_dir: /srv
     command: ["python", "-m", "http.server", "8000", "--bind", "0.0.0.0"]
   nginx:
-    image: nginx:stable-alpine
+    image: nginx:stable-alpine@sha256:3bc3836dc0be3b811f238210360bf8e7ca8a2d0effdae46160bf1f3578710051
     ports:
       - "127.0.0.1:8081:80"
     volumes:
@@ -12,5 +12,5 @@ services:
     depends_on:
       - backend
   client:
-    image: python:3.12-alpine
+    image: python:3.12-alpine@sha256:c5ba3deef00c7758561a0f03c26f44f10589263d40e732b8748e0d1f38f6dd89
     command: ["python", "-c", "import time; time.sleep(10**9)"]
