@@ -195,6 +195,28 @@ def test_prompt_refuses_the_web_server_and_offers_host_addresses_as_a_class():
     assert "아직 안 낸 단위: D2 (빈 주소), D2 (실험망 호스트 주소), T2" in prompt
 
 
+def test_prompt_lists_every_valid_combination_as_already_proposed():
+    history = [
+        fb([D2_EMPTY], [("D2", D2_LABEL, "cause_wrong")]),
+        fb([D2_HOST], [("D2", D2_LABEL, "correct")]),
+        fb([T2], [("T2", T2_LABEL, "cause_wrong")], valid=False),
+    ]
+    complete = fake_model(
+        json.dumps(
+            {
+                "faults": [{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.77"}}],
+                "complaint": "사이트가 열리지 않아요.",
+            },
+            ensure_ascii=False,
+        )
+    )
+    LLMBreaker(complete, LAB, TARGET).propose(history)
+    block = complete.prompts[0].split("## 이미 낸 조합")[1].split("## ")[0]
+    assert '- D2 {"domain": "shop.lab", "ip": "10.20.0.99"}' in block
+    assert '- D2 {"domain": "shop.lab", "ip": "10.20.0.54"}' in block
+    assert "T2" not in block  # 무효 라운드는 이미 낸 조합에 넣지 않는다
+
+
 def test_host_address_proposal_is_accepted():
     complete = fake_model(
         json.dumps(

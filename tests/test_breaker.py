@@ -253,7 +253,7 @@ def test_rejected_round_faults_are_not_treated_as_duplicates():
 ANSWER_LABELS = frozenset(f.label for f in FAULTS.values())
 
 
-HEADINGS = ["## 규칙", "## 장애 목록", "## 지난 라운드", "## 출력"]
+HEADINGS = ["## 규칙", "## 장애 목록", "## 지난 라운드", "## 이미 낸 조합", "## 출력"]
 
 
 def headings(prompt: str) -> list[str]:

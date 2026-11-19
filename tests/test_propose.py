@@ -18,6 +18,21 @@ GOOD = json.dumps(
 )
 
 
+def _d2(i):
+    """서로 다른 D2 제안 하나. 대역 안의 주소 번호만 바꾼다."""
+    params = {"domain": "shop.lab", "ip": f"10.20.0.{100 + i}"}
+    return json.dumps(
+        {"faults": [{"id": "D2", "params": params}], "complaint": "사이트가 열리지 않는다"},
+        ensure_ascii=False,
+    )
+
+
+def _replies(*items):
+    """준비한 응답을 호출 순서대로 돌려준다."""
+    queue = list(items)
+    return lambda _prompt: queue.pop(0)
+
+
 def _use_fake(monkeypatch, reply):
     """OpencodeComplete 자리에 가짜 호출을 넣는다. 받은 프롬프트와 생성 인자를 돌려준다."""
     prompts: list[str] = []
@@ -60,7 +75,7 @@ def test_breaker_propose_writes_the_accepted_scenario_and_the_call_journal(
 
 
 def test_each_accepted_scenario_gets_its_own_file_that_validate_can_read(monkeypatch, tmp_path):
-    _use_fake(monkeypatch, lambda _p: GOOD)
+    _use_fake(monkeypatch, _replies(_d2(1), _d2(2), _d2(3)))
     assert _run(tmp_path, "--n", "3") == 0
     files = sorted(tmp_path.glob("breaker-propose-*.scenario.json"))
     assert [f.name.endswith(f"-{i:02d}.scenario.json") for i, f in enumerate(files, 1)] == [
@@ -73,7 +88,7 @@ def test_each_accepted_scenario_gets_its_own_file_that_validate_can_read(monkeyp
 
 
 def test_n_proposals_each_get_a_call_and_all_are_counted(monkeypatch, capsys, tmp_path):
-    prompts, _ = _use_fake(monkeypatch, lambda _p: GOOD)
+    prompts, _ = _use_fake(monkeypatch, _replies(_d2(1), _d2(2), _d2(3)))
     assert _run(tmp_path, "--n", "3") == 0
     assert len(prompts) == 3
     assert "제안 요청 3회, 채택 3회" in capsys.readouterr().out
@@ -123,6 +138,15 @@ def test_model_flag_reaches_the_opencode_call(monkeypatch, tmp_path):
     _, built = _use_fake(monkeypatch, lambda _p: GOOD)
     assert _run(tmp_path, "--model", "opencode-go/test-model") == 0
     assert built[0]["model"] == "opencode-go/test-model"
+
+
+def test_an_accepted_proposal_is_not_repeated_later_in_the_same_run(monkeypatch, capsys, tmp_path):
+    prompts, _ = _use_fake(monkeypatch, lambda _p: GOOD)
+    assert _run(tmp_path, "--n", "2") == 0
+    out = capsys.readouterr().out
+    assert "제안 요청 2회, 채택 1회" in out
+    assert "중복 3" in out  # 두 번째 제안은 세 번 모두 같은 조합이라 거부된다
+    assert '- T2 {"port": 80}' in prompts[1]
 
 
 def test_fixed_history_rounds_do_not_change_the_prompt(monkeypatch, tmp_path):
