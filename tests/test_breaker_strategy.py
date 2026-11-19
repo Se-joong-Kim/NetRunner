@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from netrunner.breaker import CompletionError, LLMBreaker
+from netrunner.breaker import BreakerError, CompletionError, LLMBreaker
+from netrunner.breaker_log import CallJournal
 from netrunner.breaker_strategy import (
     exhausted_faults,
     plan,
@@ -178,7 +179,8 @@ def test_prompt_shows_strategy_after_an_exhausting_round():
     prompt = complete.prompts[0]
     assert "## 출제 전략" in prompt
     assert "더 낼 수 없는 장애: T2" in prompt
-    assert "아직 안 낸 단위: D2/ip=empty" in prompt
+    assert "아직 안 낸 단위: D2 (빈 주소)" in prompt
+    assert "ip=empty" not in prompt  # 내부 표기는 모델에게 보이지 않는다
     assert "- T2:" not in prompt  # 고갈된 장애는 장애 목록에서 빠진다
 
 
@@ -207,6 +209,33 @@ def test_host_address_proposal_is_refused_and_the_reason_goes_back_to_the_model(
     assert sc.faults[0].params["ip"] == "10.20.0.99"
     assert breaker.stats.lab_refused == 1
     assert "실험망이 주입하지 않는 주소를 씀: 10.20.0.54" in complete.prompts[1]
+
+
+def test_params_given_as_a_list_are_rejected_not_silently_converted():
+    as_pairs = json.dumps(
+        {"faults": [{"id": "T2", "params": [["port", 80]]}], "complaint": "열리지 않음"}
+    )
+    complete = fake_model(as_pairs, as_pairs, as_pairs)
+    breaker = LLMBreaker(complete, LAB, TARGET)
+    with pytest.raises(BreakerError):
+        breaker.propose([])
+    assert breaker.stats.unparsable == 3
+    assert breaker.stats.accepted == 0
+
+
+def test_lone_surrogate_in_a_rejected_value_does_not_break_the_journal(tmp_path):
+    bad = json.dumps(
+        {
+            "faults": [{"id": "D2", "params": {"domain": "shop.lab", "ip": "\ud800"}}],
+            "complaint": "사이트가 열리지 않아요.",
+        }
+    )
+    complete = fake_model(bad, GOOD_D2)
+    journal = CallJournal(tmp_path / "breaker-test.jsonl")
+    LLMBreaker(complete, LAB, TARGET, record=journal).propose([])
+    lines = (tmp_path / "breaker-test.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert "\ud800" not in json.loads(lines[0])["verdict"]
 
 
 def test_api_error_keeps_the_last_rejection_reason_for_the_next_attempt():

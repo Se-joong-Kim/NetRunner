@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from netrunner import __main__ as cli
 from netrunner.breaker import CompletionError
 
@@ -46,8 +48,8 @@ def test_breaker_propose_writes_the_accepted_scenario_and_the_call_journal(
     assert "제안 요청 1회, 채택 1회" in out
     assert "채택률(채택/호출) 100%" in out
     assert "서로 다른 조합 1개" in out
-    (chosen,) = tmp_path.glob("breaker-propose-*.jsonl")
-    scenario = json.loads(chosen.read_text(encoding="utf-8").splitlines()[0])
+    (chosen,) = tmp_path.glob("breaker-propose-*-01.scenario.json")
+    scenario = json.loads(chosen.read_text(encoding="utf-8"))
     assert scenario["origin"] == "breaker"
     assert scenario["target_url"] == "http://shop.lab/"
     assert [f["id"] for f in scenario["faults"]] == ["T2"]
@@ -57,13 +59,24 @@ def test_breaker_propose_writes_the_accepted_scenario_and_the_call_journal(
     assert len(prompts) == 1
 
 
+def test_each_accepted_scenario_gets_its_own_file_that_validate_can_read(monkeypatch, tmp_path):
+    _use_fake(monkeypatch, lambda _p: GOOD)
+    assert _run(tmp_path, "--n", "3") == 0
+    files = sorted(tmp_path.glob("breaker-propose-*.scenario.json"))
+    assert [f.name.endswith(f"-{i:02d}.scenario.json") for i, f in enumerate(files, 1)] == [
+        True,
+        True,
+        True,
+    ]
+    for f in files:
+        assert json.loads(f.read_text(encoding="utf-8"))["origin"] == "breaker"
+
+
 def test_n_proposals_each_get_a_call_and_all_are_counted(monkeypatch, capsys, tmp_path):
     prompts, _ = _use_fake(monkeypatch, lambda _p: GOOD)
     assert _run(tmp_path, "--n", "3") == 0
     assert len(prompts) == 3
     assert "제안 요청 3회, 채택 3회" in capsys.readouterr().out
-    (chosen,) = tmp_path.glob("breaker-propose-*.jsonl")
-    assert len(chosen.read_text(encoding="utf-8").splitlines()) == 3
 
 
 def test_failed_proposals_are_reported_and_give_exit_code_one(monkeypatch, capsys, tmp_path):
@@ -75,7 +88,29 @@ def test_failed_proposals_are_reported_and_give_exit_code_one(monkeypatch, capsy
     captured = capsys.readouterr()
     assert captured.err.count("제안 실패") == 2
     assert "제안 요청 2회, 채택 0회" in captured.out
-    assert not list(tmp_path.glob("breaker-propose-*.jsonl"))
+    assert not list(tmp_path.glob("breaker-propose-*.scenario.json"))
+
+
+def test_accepted_scenarios_are_saved_before_a_later_crash(monkeypatch, tmp_path):
+    calls: list[int] = []
+
+    def reply(_prompt):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("중간에 끊김")
+        return GOOD
+
+    _use_fake(monkeypatch, reply)
+    with pytest.raises(RuntimeError):
+        _run(tmp_path, "--n", "3")
+    assert len(list(tmp_path.glob("breaker-propose-*.scenario.json"))) == 1
+
+
+def test_invalid_target_url_is_rejected_before_any_call(monkeypatch, capsys, tmp_path):
+    prompts, _ = _use_fake(monkeypatch, lambda _p: GOOD)
+    assert _run(tmp_path, "--target", "http://shop.lab:99999/") == 1
+    assert "대상 URL이 잘못됨" in capsys.readouterr().err
+    assert prompts == []
 
 
 def test_n_must_be_at_least_one(monkeypatch, capsys, tmp_path):

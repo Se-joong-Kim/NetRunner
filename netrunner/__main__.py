@@ -223,14 +223,21 @@ def format_proposal_summary(
 def cmd_breaker_propose(args) -> int:
     """GLM으로 시나리오를 n번 제안받아 검사 통과율을 센다. 실험망은 건드리지 않는다.
 
-    모델 호출마다 원문과 판정을 breaker-<시각>.jsonl에, 채택된 시나리오를
-    breaker-propose-<시각>.jsonl에 --out 폴더로 남긴다. 지난 라운드 기록
+    모델 호출마다 원문과 판정을 breaker-<시각>.jsonl에 --out 폴더로 남긴다.
+    채택된 시나리오는 하나씩 breaker-propose-<시각>-NN.scenario.json 파일로
+    채택 즉시 저장한다(뒤의 호출이 실패해도 앞의 것은 남는다). 지난 라운드 기록
     (--history)이 있으면 그 피드백을 제안 프롬프트에 넣는다. 한 건도 채택되지
     않으면 1을 돌려준다. n번의 제안은 같은 history로 받는 독립 제안이며, 서로
     중복으로 막지 않는다(실제 매치의 중복은 history 기준으로만 판정한다).
     """
     if args.n < 1:
         print("--n은 1 이상이어야 함", file=sys.stderr)
+        return 1
+    probe = Scenario(scenario_id="", target_url=args.target, faults=[], complaint="")
+    try:
+        _ = (probe.domain, probe.port)
+    except ValueError:
+        print(f"대상 URL이 잘못됨: {args.target}", file=sys.stderr)
         return 1
     info = LabInfo.load(args.lab)
     history = []
@@ -247,21 +254,27 @@ def cmd_breaker_propose(args) -> int:
         complete, info, args.target, max_faults=args.max_faults, record=CallJournal(journal)
     )
     accepted: list[Scenario] = []
+    stem = f"breaker-propose-{stamp}"
     for _ in range(args.n):
         try:
-            accepted.append(breaker.propose(history))
+            sc = breaker.propose(history)
         except BreakerError as e:
             print(f"제안 실패: {e}", file=sys.stderr)
+            continue
+        accepted.append(sc)
+        path = out / f"{stem}-{len(accepted):02d}.scenario.json"
+        path.write_text(
+            json.dumps(asdict(sc), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
     distinct = len({signature(sc.faults, sc.domain) for sc in accepted})
     print(format_proposal_summary(breaker.stats, args.n, len(accepted), distinct))
     print(f"\n호출 기록: {journal}")
     if not accepted:
         return 1
-    chosen = out / f"breaker-propose-{stamp}.jsonl"
-    with chosen.open("w", encoding="utf-8") as fp:
-        for sc in accepted:
-            fp.write(json.dumps(asdict(sc), ensure_ascii=False) + "\n")
-    print(f"채택 시나리오: {chosen}")
+    print(
+        f"채택 시나리오: {out / stem}-*.scenario.json ({len(accepted)}개, "
+        "netrunner validate로 검사 가능)"
+    )
     return 0
 
 

@@ -98,14 +98,24 @@ def _history_line(fb: BreakerFeedback, known: Collection[str]) -> str:
     )
 
 
+def _unit_label(unit: str) -> str:
+    """출제 단위를 모델이 읽을 이름으로 바꾼다. 내부 표기 ip=empty는 빈 주소로 설명한다."""
+    return unit.replace("/ip=empty", " (빈 주소)")
+
+
 def _strategy_lines(hints: Hints) -> list[str]:
     """출제 힌트 절. 근거만 적고 고르는 일은 모델에게 맡긴다."""
-    tried = [f"{unit} {rate:.2f}" for unit, rate in hints.ranked if unit not in hints.untried]
+    tried = [
+        f"{_unit_label(unit)} {rate:.2f}"
+        for unit, rate in hints.ranked
+        if unit not in hints.untried
+    ]
+    untried = [_unit_label(unit) for unit in hints.untried]
     lines = [
         "## 출제 전략",
         "아래는 지난 유효 라운드로 계산한 근거다. 무엇을 낼지는 네가 정한다.",
         f"- 오답률(평활, 높을수록 진단이 자주 틀림): {', '.join(tried) or '시도 없음'}",
-        f"- 아직 안 낸 단위: {', '.join(hints.untried) or '없음'}",
+        f"- 아직 안 낸 단위: {', '.join(untried) or '없음'}",
         f"- 같은 조합이 이미 나와 더 낼 수 없는 장애: {', '.join(hints.exhausted) or '없음'}",
     ]
     if hints.over_predicted:
@@ -151,8 +161,8 @@ def build_prompt(
             + ", ".join(CLUE_WORDS),
             "- 주입할 수 없는 주소(실험망 호스트와 정상 서버)는 ip로 쓰지 않는다: "
             + ", ".join(sorted(lab_refused_addresses(lab))),
-            "- 진단이 틀렸던 장애(cause_wrong, stage_wrong, missed)를 다시 시험해 볼 만하다.",
-            "  같은 장애 조합과 매개변수는 반복하지 않는다.",
+            "- 진단이 틀렸던 장애(cause_wrong, stage_wrong, missed) 가운데 장애 목록에 남은 것을",
+            "  다시 시험해 볼 만하다. 같은 장애 조합과 매개변수는 반복하지 않는다.",
             "",
             "## 장애 목록",
             *(_fault_line(f, target, lab) for f in enabled),

@@ -66,7 +66,9 @@ class ProposalStats:
     invalid: int = 0  # 심판 검증 규칙에 걸림
     masked: int = 0  # 앞 단계 장애에 가려 클라이언트에서 볼 수 없음
     over_limit: int = 0  # 실험망이 동시에 켤 수 있는 장애 수를 넘음
-    lab_refused: int = 0  # 실험망 호스트나 정상 서버 주소를 IP로 씀(주입되지 않음)
+    lab_refused: int = (
+        0  # 실험망 호스트 주소를 IP로 씀(주입되지 않음). 정상 서버 주소는 validate가 먼저 거부
+    )
     accepted: int = 0
 
     @property
@@ -90,6 +92,11 @@ def parse_proposal(text: str) -> dict:
         if isinstance(obj, dict):
             return obj
     raise ValueError("JSON 객체가 없음")
+
+
+def _plain(text: str) -> str:
+    """인코딩할 수 없는 문자(짝 없는 서로게이트)를 이스케이프해 기록과 프롬프트에 안전하게 쓴다."""
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 class LLMBreaker:
@@ -159,6 +166,7 @@ class LLMBreaker:
                 continue
             self.stats.calls += 1
             sc, reason = self._check(text)
+            reason = _plain(reason)
             self._journal(attempt, sent, text, reason or "채택")
             if sc is not None:
                 self.stats.accepted += 1
@@ -188,6 +196,11 @@ class LLMBreaker:
             # 모델 출력은 신뢰하지 않는다. 타입이 틀리면 검증 전에 형식 오류로 센다.
             if not isinstance(faults, list) or not isinstance(complaint, str):
                 raise ValueError("faults는 목록, complaint는 문자열이어야 함")
+            # FaultSpec.from_dict는 params 목록을 조용히 dict로 바꾼다. 변환 전에 원본을 본다.
+            for item in faults:
+                params = item.get("params") if isinstance(item, dict) else None
+                if not isinstance(item, dict) or not isinstance(params or {}, dict):
+                    raise ValueError("장애는 {id, params} 객체여야 하고 params는 객체여야 함")
             sc = Scenario.from_dict(
                 {
                     "scenario_id": f"BR-{self.stats.accepted + 1:03d}",
