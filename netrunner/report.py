@@ -13,7 +13,7 @@ import statistics
 from collections import defaultdict
 from pathlib import Path
 
-from . import PROPOSAL_FAILED
+from .contracts import Status
 
 VERDICT_KO = {
     "correct": "정답",
@@ -53,12 +53,12 @@ def summarize(records: list[dict]) -> list[dict]:
     """
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in records:
-        if r["status"] not in ("rejected", PROPOSAL_FAILED):
+        if r["status"] not in (Status.REJECTED, Status.PROPOSAL_FAILED):
             groups[(r["model"], r["method"], r["origin"])].append(r)
 
     rows = []
     for (model, method, origin), rs in sorted(groups.items()):
-        sc = [r["score"] for r in rs if r["status"] == "scored"]
+        sc = [r["score"] for r in rs if r["status"] == Status.SCORED]
         times = [s["elapsed_s"] for s in sc]
         tools = [s["tool_calls"] for s in sc]
         faults = sum(s["scored_faults"] for s in sc)
@@ -169,7 +169,7 @@ def _mark(v) -> str:
 
 
 def _round_card(r: dict) -> str:
-    if r["status"] == PROPOSAL_FAILED:
+    if r["status"] == Status.PROPOSAL_FAILED:
         return (
             f"<div class='card'><h2>Breaker 제안 실패 · {_e(r['round_id'])}</h2>"
             f"<p class='warn'>{_e(r['invalid_reason'])}</p>"
@@ -187,8 +187,8 @@ def _round_card(r: dict) -> str:
         f"<b>대상</b> <code>{_e(ans['target_url'])}</code></p>",
     ]
 
-    if r["status"] != "scored":
-        title = "거부" if r["status"] == "rejected" else "무효"
+    if r["status"] != Status.SCORED:
+        title = "거부" if r["status"] == Status.REJECTED else "무효"
         out.append(f"<p class='warn'><b>{title}</b> {_e(r['invalid_reason'])}</p>")
         for err in (r["validation"] or {}).get("errors", []):
             out.append(f"<div class='warn'>· {_e(err)}</div>")
@@ -263,8 +263,8 @@ def _round_card(r: dict) -> str:
 def render_html(records: list[dict], rows: list[dict] | None = None) -> str:
     """라운드 기록 전체를 하나의 HTML 페이지로 만든다."""
     rows = summarize(records) if rows is None else rows
-    rejected = sum(r["status"] == "rejected" for r in records)
-    failed = sum(r["status"] == PROPOSAL_FAILED for r in records)
+    rejected = sum(r["status"] == Status.REJECTED for r in records)
+    failed = sum(r["status"] == Status.PROPOSAL_FAILED for r in records)
     failure_note = f" · Breaker 제안 실패 {failed}개" if failed else ""
     table = [
         "<div class='wrap'><table><tr>"

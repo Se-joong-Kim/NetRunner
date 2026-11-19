@@ -17,6 +17,16 @@ from urllib.parse import SplitResult, urlsplit
 from .faults import label_of
 
 
+class Status:
+    """라운드 기록의 status 값. 기록 형식의 일부라서 값을 바꾸면 기존 기록과 어긋난다."""
+
+    RUNNING = "running"  # 라운드 처리 중 초기값
+    SCORED = "scored"  # 주입, 재현, 진단, 채점까지 끝남
+    INVALID = "invalid"  # 실험망을 쓴 뒤 무효가 됨
+    REJECTED = "rejected"  # 검증에서 거부되어 실험망을 쓰지 않음
+    PROPOSAL_FAILED = "proposal_failed"  # Breaker가 유효한 제안을 내지 못해 매치를 끝냄
+
+
 class ContractError(ValueError):
     """합의된 형식을 어긴 입력."""
 

@@ -393,6 +393,7 @@ def test_match_logs_breaker_failure_and_preserves_completed_rounds(tmp_path, com
     assert failure["scenario_id"] is None and failure["answer"] is None
     assert failure["reset_verified"] is None and failure["score"] is None
     assert failure["lab_log"] == [] and feedback_for(failure) is None
+    assert failure["model"] is None and failure["method"] is None
     assert failure["started_at"] <= failure["finished_at"]
     saved = path.read_text(encoding="utf-8")
     assert [json.loads(line) for line in saved.splitlines()] == records

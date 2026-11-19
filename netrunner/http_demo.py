@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from .contracts import Scenario, read_json
+from .contracts import Scenario, Status, read_json
 from .diagnoser import HttpDiagnoser
 from .http_lab import ROOT, HttpDockerLab
 from .referee import Referee
@@ -37,7 +37,7 @@ def main():
     html = records.with_suffix(".html")
     html.write_text(render_html([record], summarize([record])), encoding="utf-8")
     print(f"기록: {records}\n결과 화면: {html}")
-    return 0 if record["status"] == "scored" and record["reset_verified"] else 1
+    return 0 if record["status"] == Status.SCORED and record["reset_verified"] else 1
 
 
 if __name__ == "__main__":

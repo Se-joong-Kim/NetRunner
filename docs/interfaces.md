@@ -22,7 +22,7 @@ python -m pytest tests                          # 심판 테스트
 4. **진단**: Diagnoser에게는 `RoundBrief`와 도구 창구(`Toolbox`)만 넘긴다. 검사는 창구로만 하고, 창구가 실제 출력을 기록한다. 시나리오 ID, 장애, 주입 로그, 정답은 넘기지 않는다.
 5. **채점·정답 공개**
 6. **복구·정상화 확인**: `reset` 후 `health_check`를 다시 부른다. 무효 라운드여도 반드시 실행하며, 정상화가 확인되지 않으면 다음 라운드를 돌리지 않는다.
-7. **기록**: 라운드마다 JSONL 한 줄을 남긴다. 결과 화면과 Breaker의 기억은 이 기록으로 만든다.
+7. **기록**: 라운드마다 JSONL 한 줄을 남긴다(형식은 6절). 결과 화면과 Breaker의 기억은 이 기록으로 만든다.
 
 ## 1. Breaker → 심판: 시나리오
 
@@ -147,7 +147,7 @@ Diagnoser는 검사를 **심판이 라운드마다 만들어 넘기는 도구 �
 
 - `stage`는 `DNS | 경로 | TCP | TLS | HTTP | 차단` 중 하나이고, `cause`는 장애 목록의 원인 이름을 쓴다. 영어 별칭(`path`, `refused`, `packet loss` 등)도 받는다.
 - `method`는 설계안 9.2절의 비교 대상이다: `A` 규칙 기반, `B` 도구 없는 LLM, `C` 전체, `C-1` 캡처 제외, `C-2` 요약기 제외.
-- `model`은 반드시 채운다. Solar와 GLM의 숫자가 섞이지 않게 하기 위해서다.
+- `model`은 진단을 실행한 라운드에 반드시 채운다. Solar와 GLM의 숫자가 섞이지 않게 하기 위해서다. Breaker 제안 실패 기록(6절)은 진단이 없으므로 `null`이다.
 - **근거 참조 형식**: `probe:<probe_id>`는 명령 출력 전체를, `pcap:<probe_id>#<n>` 또는 `#<n>-<m>`은 캡처 안의 패킷 번호를 가리킨다. 번호는 도구 창구가 붙인 것이다. `trace`는 옛 형식과 호환하려고 남긴 칸이며 채점에 쓰지 않는다. 근거의 존재와 지지는 창구 기록(라운드 기록의 `probes`)으로 판정한다.
 
 ## 5. 심판 → Breaker: `BreakerFeedback`
@@ -171,6 +171,29 @@ Diagnoser는 검사를 **심판이 라운드마다 만들어 넘기는 도구 �
 | `stage_wrong` | 그 단계 진단이 없고 다른 단계를 지목함 |
 | `missed` | 아무것도 지목하지 않음 |
 | `masked` | 관측 불가로 채점에서 제외 |
+
+## 6. 라운드 기록: JSONL
+
+심판은 라운드마다 JSON 한 줄을 남긴다. Breaker가 유효한 제안을 내지 못해 라운드가 시작되지 않은 경우(`proposal_failed`)도 같은 키를 가진 한 줄을 남긴다. 모든 키는 처음부터 있고, 값이 없으면 `null`이나 빈 목록이다.
+
+`status`는 다음 다섯 값 중 하나다. 값은 `netrunner/contracts.py`의 `Status`에 모여 있으며, 기록의 값이므로 바꾸면 기존 기록과 어긋난다.
+
+| status | 뜻 | 실험망 사용 | 채점 | Breaker 피드백 |
+|---|---|---|---|---|
+| `scored` | 주입, 재현, 진단, 채점까지 끝남 | 예 | 예 | `valid=true` |
+| `invalid` | 실험망을 쓴 뒤 무효가 됨(주입 실패, 재현 실패, 진단 오류 등) | 예 | 아니오 | `valid=false`, 사유 포함 |
+| `rejected` | 검증에서 거부되어 실험망을 쓰지 않음 | 아니오 | 아니오 | `valid=false`, 사유 포함 |
+| `proposal_failed` | Breaker가 유효한 제안을 내지 못해 매치를 끝냄 | 아니오 | 아니오 | 보내지 않음 |
+| `running` | 라운드 처리 중 초기값. 처리가 끝나면 위 값 중 하나로 바뀐다 | — | — | — |
+
+`proposal_failed` 기록의 값은 다음과 같다.
+
+- `scenario_id`, `answer`, `brief`, `diagnosis`, `reset_verified`, `score`는 `null`이다.
+- `origin`은 `breaker`, `model`과 `method`는 `null`이다. 진단이 없었기 때문이다.
+- `lab_log`, `probes`, `rejected_calls`는 빈 목록이다.
+- `invalid_reason`은 고정 문장이다. Breaker의 응답 원문이나 API 오류 내용은 기록하지 않는다.
+
+지표(`report`)는 `rejected`와 `proposal_failed`를 뺀다.
 
 ## 채점 규칙
 
