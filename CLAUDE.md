@@ -78,12 +78,12 @@ Breaker, Diagnoser, 실험망, 심판은 각자 일에 필요한 입력과 파�
 
 ### opencode 권한과 샌드박스
 
-opencode는 GLM 호출(Breaker)과 개발 에이전트에 쓴다. 권한은 기본 거부로 두고 필요한 것만 연다. 역할별 경로 규칙은 위 "역할별 권한"을 따른다.
+opencode는 GLM 호출(Breaker)과 개발 에이전트에 쓴다. 원칙은 허용 목록(whitelist)이다. 환경변수, 도구 권한, 샌드박스 모두 목록에 없는 것은 거부하고, 필요한 것만 목록에 넣는다. 역할별 경로 규칙은 위 "역할별 권한"을 따른다.
 
 - Breaker 에이전트(`netrunner`)는 도구를 쓰지 않는다. `config/opencode_sandbox.json`의 모든 권한을 `deny`로 둔다. 허용을 더하려면 이유를 PR 본문에 적고 `tests/test_sandbox_config.py`를 함께 고친다.
 - 실행은 `netrunner/glm_client.py` 한 곳에서만 한다: `opencode run --standalone --agent netrunner -m <모델> --format json --archived`. `--auto`, `--yolo`, `--dangerously-skip-permissions`(모두 묻지 않고 승인)는 쓰지 않는다. 에이전트와 설정 경로를 다른 곳에서 바꾸지 않는다.
-- 자식 프로세스에는 환경변수 허용 목록만 넘긴다. 목록은 `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TERM`, 프록시(`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, 소문자 포함), `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`이고, 접두사 `LC_*`와 `XDG_*`도 허용한다. 이름에 `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `PASSWD`, `CREDENTIAL`, `AUTH`가 들어간 변수는 접두사가 맞아도 넘기지 않는다. 목록을 늘리려면 이유를 적는다.
-- 이 저장소의 기본 에이전트(build, plan)는 `opencode.json`으로 `ask`를 기본으로 한다. 외부 경로(`external_directory`), 웹 가져오기와 검색, 브라우저는 `deny`다. `.env` 읽기도 `deny`다. 정답 시나리오(`fixtures/**/*.scenario.json`), `runs/`, `captures/`는 `read`를 `deny`로 막는다. 전역 설정(`~/.config/opencode/`)에 권한을 풀어 두지 않는다.
+- 자식 프로세스(opencode, Docker Compose, HTTP 실험망 도구)에는 허용 목록의 환경변수만 넘긴다. 목록과 비밀 표지는 `netrunner/child_env.py` 한 곳에만 둔다. CLAUDE.md에는 목록을 옮겨 적지 않는다. 목록을 늘리려면 이유를 PR 본문에 적는다.
+- 이 저장소의 기본 에이전트(build, plan)는 `opencode.json`으로 기본 거부(`*: deny`)다. 목록에 있는 것만 연다. 읽기, 검색, 편집, 셸은 `ask`(묻고 승인), 질문은 `allow`다. 정답 시나리오(`fixtures/**/*.scenario.json`)는 읽기를 거부하고, `runs/`와 `captures/`는 읽기, 검색, 편집을 거부한다. 외부 경로, 웹 가져오기와 검색, 브라우저, 스킬은 `deny`다. 전역 설정(`~/.config/opencode/`)에 권한을 풀어 두지 않는다.
 - 샌드박스가 실제로 막는지는 기록으로 확인한다. 도구 호출은 `~/.local/share/opencode/opencode.db`의 `session_message`에 남는다. 먼저 읽기를 허용한 임시 설정(저장소 밖)에서 같은 요청을 보내 호출 기록이 생기는지 대조군으로 확인하고, 실제 설정에서 기록이 없는지 본다. "거부합니다"라는 대답만으로는 증거가 아니다.
 - 인증과 기록 파일(`~/.local/share/opencode/auth.json`, `~/.config/opencode/service.json`, `~/.local/share/opencode/opencode.db`와 `-wal`·`-shm`, `~/netrunner-private/`의 파일)은 600으로 둔다. 폴더는 `~/netrunner-private/`와 그 안 `runs/`만 700이다. 코드는 파일 권한을 설정하지 않으므로 사람이 `umask 077` 또는 `chmod`로 맞춘다(셸 기본 umask는 0002라 새 파일은 664가 된다). 키와 비밀번호 값은 출력하거나 저장소에 넣지 않는다. 확인이 필요하면 이름과 권한만 본다.
 - 토큰이나 키를 검색하지 않는다. 환경변수는 이름 목록만 보고 값은 보지 않는다.
