@@ -32,6 +32,17 @@ def test_invalid_faults_and_urls_never_run_commands(monkeypatch):
     assert not lab.health_check("http://shop.lab:0/").ok
 
 
+def test_d2_allows_other_lab_hosts(monkeypatch):
+    lab = DockerLab()
+    calls = []
+    monkeypatch.setattr(
+        lab, "_set_dns", lambda domain, ip: calls.append((domain, ip)) or {"exit_code": 0}
+    )
+    for ip in (lab.hosts["dns"], lab.hosts["alt_dns"], lab.hosts["router"]):
+        assert lab.inject(FaultSpec("D2", {"domain": "shop.lab", "ip": ip})).ok
+    assert calls == [("shop.lab", lab.hosts[name]) for name in ("dns", "alt_dns", "router")]
+
+
 def test_reset_attempts_firewall_even_if_dns_fails(monkeypatch):
     lab = DockerLab()
     calls = []
@@ -179,3 +190,22 @@ def test_partial_injection_failure_is_recovered(monkeypatch):
     )
     assert record["status"] == "invalid" and record["reset_verified"]
     assert lab.health_check(scenario.target_url).ok
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+def test_real_lab_d2_alt_dns_refuses_connection_and_recovers():
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r1_dns_old_ip.scenario.json")
+    )
+    scenario.faults[0].params["ip"] = lab.hosts["alt_dns"]
+    try:
+        assert lab.health_check(scenario.target_url).ok
+        assert lab.inject(scenario.faults[0]).ok
+        result = lab.verify_symptom(scenario)
+        assert result.ok, result.observations
+        assert "Connection refused" in result.observations["curl"]["stderr"]
+        assert "Flags [R" in result.observations["capture"]["stdout"]
+    finally:
+        assert lab.reset().ok
+        assert lab.health_check(scenario.target_url).ok
