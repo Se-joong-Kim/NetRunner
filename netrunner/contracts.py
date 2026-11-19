@@ -251,7 +251,7 @@ class Diagnosis:
     """Diagnoser의 출력 한 건: 진단 목록, 검사 기록, 사용량."""
 
     round_id: str
-    # 예: "solar-pro2", "glm-4.5". 교체 전후 숫자가 섞이지 않게 남긴다.
+    # 예: "solar-pro2", "glm-5.3-flash". 교체 전후 숫자가 섞이지 않게 남긴다.
     model: str
     # 설계안 9.2절: "A" 규칙 | "B" 도구 없는 LLM | "C" 전체 | "C-1" | "C-2"
     method: str
