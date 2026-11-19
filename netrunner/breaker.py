@@ -6,6 +6,7 @@ history는 채점이 끝난 대결 라운드의 BreakerFeedback 목록이다.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -16,6 +17,10 @@ from .breaker_prompt import build_prompt, with_rejection
 from .breaker_strategy import plan, refused_by_lab, signature
 from .contracts import BreakerFeedback, Scenario
 from .validate import MAX_FAULTS, LabInfo, validate
+
+
+def _discard(record: dict) -> None:
+    """기록 함수를 주지 않았을 때 쓰는 빈 기록 함수."""
 
 
 class Breaker(Protocol):
@@ -96,6 +101,9 @@ class LLMBreaker:
 
     max_faults는 실험망이 한 라운드에 켤 수 있는 동시 장애 수다. 진입점이
     실험망 구현에 맞춰 넘긴다.
+
+    record는 모델 호출 한 번마다 {call, target_url, attempt, prompt_sha256,
+    raw, verdict}를 받는 함수다. 호출 실패는 raw가 None이다. 기본값은 버린다.
     """
 
     def __init__(
@@ -105,12 +113,14 @@ class LLMBreaker:
         target_url: str,
         max_attempts: int = 3,
         max_faults: int = MAX_FAULTS,
+        record: Callable[[dict], None] = _discard,
     ):
         self._complete = complete
         self._lab = lab
         self._target_url = target_url
         self._max_attempts = max_attempts
         self._max_faults = max_faults
+        self._record = record
         self._seen: set[tuple] = set()
         self.stats = ProposalStats()
 
@@ -136,22 +146,38 @@ class LLMBreaker:
         )
         reason = ""
         last_error = ""
-        for _ in range(self._max_attempts):
+        for attempt in range(1, self._max_attempts + 1):
+            sent = with_rejection(prompt, reason) if reason else prompt
             try:
-                text = self._complete(with_rejection(prompt, reason) if reason else prompt)
+                text = self._complete(sent)
             except CompletionError as e:
                 self.stats.calls += 1
                 self.stats.api_errors += 1
                 reason = ""
                 last_error = str(e)
+                self._journal(attempt, sent, None, f"API 오류: {e}")
                 continue
             self.stats.calls += 1
             sc, reason = self._check(text)
+            self._journal(attempt, sent, text, reason or "채택")
             if sc is not None:
                 self.stats.accepted += 1
                 return sc
         detail = reason or f"API 오류: {last_error}"
         raise BreakerError(f"{self._max_attempts}회 시도 안에 유효한 제안 없음: {detail}")
+
+    def _journal(self, attempt: int, sent: str, raw: str | None, verdict: str) -> None:
+        """모델 호출 한 번의 프롬프트 해시, 원문, 판정을 기록 함수에 넘긴다."""
+        self._record(
+            {
+                "call": self.stats.calls,
+                "target_url": self._target_url,
+                "attempt": attempt,
+                "prompt_sha256": hashlib.sha256(sent.encode("utf-8")).hexdigest(),
+                "raw": raw,
+                "verdict": verdict,
+            }
+        )
 
     def _check(self, text: str) -> tuple[Scenario | None, str]:
         """출력 하나를 시나리오로 바꿔 검사한다. (시나리오, '') 또는 (None, 사유)."""
