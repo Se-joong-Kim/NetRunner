@@ -223,14 +223,20 @@ class LLMBreaker:
         v = validate(sc, self._lab)
         if not v.ok:
             self.stats.invalid += 1
-            return None, "; ".join(v.errors)
+            reason = "; ".join(v.errors)
+            if any("원인 단서" in e for e in v.errors):
+                reason += ". 그 단어를 빼고 같은 장애로 다시 쓴다"
+            return None, reason
         refused = sorted({v for f in sc.faults for v in refused_values(f, self._lab)})
         if refused:
             self.stats.lab_refused += 1
             return None, f"실험망이 주입하지 않는 주소를 씀: {', '.join(refused)}"
         if len(sc.faults) > self._max_faults:
             self.stats.over_limit += 1
-            return None, f"동시 장애 {len(sc.faults)}개, 실험망 한도 {self._max_faults}개"
+            return None, (
+                f"장애 {len(sc.faults)}개를 냈다. 실험망 한도는 {self._max_faults}개이므로"
+                " 한 개만 고른다"
+            )
         hidden = [f.id for f, seen in zip(sc.faults, v.observable, strict=True) if not seen]
         if hidden:
             self.stats.masked += 1
