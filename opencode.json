@@ -9,7 +9,10 @@
     "read": {
       "*": "ask",
       "*.env": "deny",
-      "*.env.*": "deny"
+      "*.env.*": "deny",
+      "fixtures/**/*.scenario.json": "deny",
+      "runs/**": "deny",
+      "captures/**": "deny"
     }
   }
 }

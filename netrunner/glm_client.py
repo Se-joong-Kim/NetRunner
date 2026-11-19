@@ -44,13 +44,22 @@ _ENV_NAMES = frozenset(
     }
 )
 _ENV_PREFIXES = ("LC_", "XDG_")
+# 접두사로 허용해도 이름에 이 표지가 있으면 넘기지 않는다(예: LC_TOKEN).
+_SECRET_MARKERS = ("TOKEN", "KEY", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH")
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
 
+def _allowed(name: str) -> bool:
+    """허용 목록의 이름이거나 허용 접두사로 시작하고, 비밀 표지가 없는 이름인지 본다."""
+    if any(marker in name.upper() for marker in _SECRET_MARKERS):
+        return False
+    return name in _ENV_NAMES or name.startswith(_ENV_PREFIXES)
+
+
 def child_environment(environ: Mapping[str, str], config: Path) -> dict[str, str]:
     """opencode에 넘길 환경변수. 허용 목록만 복사하고 설정 경로를 더한다."""
-    kept = {k: v for k, v in environ.items() if k in _ENV_NAMES or k.startswith(_ENV_PREFIXES)}
+    kept = {k: v for k, v in environ.items() if _allowed(k)}
     kept["OPENCODE_CONFIG"] = str(config.resolve())
     return kept
 
