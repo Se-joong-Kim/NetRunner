@@ -83,10 +83,12 @@ class NoDiagnosis:
         return Diagnosis(brief.round_id, self.model, self.method, [])
 
 
-# match에 꽂을 진단기. 인자는 명령줄 인자다. 새 Diagnoser는 여기에 한 줄 추가한다.
+# match와 run에 꽂을 진단기. 인자는 명령줄 인자다. 새 Diagnoser는 여기에 한 줄 추가한다.
 DIAGNOSER_IMPLS: dict[str, Callable[[argparse.Namespace], Diagnoser]] = {
     "none": lambda _args: NoDiagnosis(),
 }
+# run에서 저장된 진단을 재생하는 모드의 이름. 다른 진단기와 섞지 않는다.
+REPLAY = "replay"
 
 
 def make_lab(impl: str, config: str | Path) -> Lab:
@@ -118,12 +120,39 @@ def run_fixed_rounds(
     return records
 
 
+def run_method_rounds(
+    referee: Referee, scenario_files: list[Path], diagnosers: list[Diagnoser], repeat: int = 1
+) -> list[dict]:
+    """고정 시나리오를 진단기(방식)마다 repeat번 돌린다.
+
+    반복 → 시나리오 → 진단기 순서로 섞는다. 실험망 상태가 시간에 따라
+    바뀌어도 한 방식에만 몰리지 않게 하려는 것이다. 정상화가 확인되지
+    않으면 그 자리에서 멈춘다.
+    """
+    scenarios = [Scenario.from_dict(read_json(sf)) for sf in scenario_files]
+    records: list[dict] = []
+    for _ in range(repeat):
+        for scenario in scenarios:
+            for diagnoser in diagnosers:
+                referee.diagnoser = diagnoser
+                records.append(referee.run_round(scenario))
+                if records[-1]["reset_verified"] is False:
+                    return records
+    return records
+
+
 def cmd_run(args) -> int:
     """고정 세트를 고른 실험망에서 심판으로 반복 실행하고 지표를 낸다.
 
-    진단은 저장된 결과를 재생하므로 AI 진단 성능이 아니라 실험망의
-    재현·정상화와 심판 경로를 확인하는 용도다.
+    --diagnoser가 없으면(replay) 저장된 진단을 재생한다. 이때는 AI 진단
+    성능이 아니라 실험망의 재현·정상화와 심판 경로를 확인하는 용도다.
+    --diagnoser로 진단기를 여럿 주면 고정 세트를 진단기(방식)마다 돌려
+    방식별 지표를 낸다.
     """
+    names = list(dict.fromkeys(args.diagnoser or [REPLAY]))
+    if REPLAY in names and len(names) > 1:
+        print("replay(저장된 진단 재생)는 다른 진단기와 함께 쓸 수 없음", file=sys.stderr)
+        return 1
     d = Path(args.dir)
     scenario_files = sorted(d.glob("*.scenario.json"))
     if not scenario_files or args.repeat < 1:
@@ -141,9 +170,13 @@ def cmd_run(args) -> int:
         records_path=records_path,
         runner=lab if probes_from_lab else None,
     )
-    records = run_fixed_rounds(
-        referee, scenario_files, args.repeat, replay_probes=not probes_from_lab
-    )
+    if names == [REPLAY]:
+        records = run_fixed_rounds(
+            referee, scenario_files, args.repeat, replay_probes=not probes_from_lab
+        )
+    else:
+        diagnosers = [DIAGNOSER_IMPLS[n](args) for n in names]
+        records = run_method_rounds(referee, scenario_files, diagnosers, args.repeat)
     stopped = records[-1]["reset_verified"] is False
     if stopped:
         print("정상화 미확인: 나머지 라운드를 중단함", file=sys.stderr)
@@ -382,13 +415,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("demo", help="고정 입력으로 라운드를 모의 실행(run --impl mock과 같음)")
     p.add_argument("--dir", default=str(ROOT / "fixtures" / "first_integration"))
     p.add_argument("--out", default=runs, help="기록 폴더(기본: ~/netrunner-private/runs)")
-    p.set_defaults(func=cmd_run, impl="mock", repeat=1)
+    p.set_defaults(func=cmd_run, impl="mock", repeat=1, diagnoser=None)
 
     p = sub.add_parser("run", help="고정 세트를 고른 실험망에서 심판으로 반복 실행")
     p.add_argument("--impl", choices=sorted(LAB_IMPLS), default="docker", help="실험망 구현")
     p.add_argument("--dir", default=str(ROOT / "fixtures" / "first_integration"))
     p.add_argument("--out", default=runs, help="기록 폴더(기본: ~/netrunner-private/runs)")
     p.add_argument("--repeat", type=int, default=1)
+    p.add_argument(
+        "--diagnoser",
+        action="append",
+        choices=[REPLAY, *sorted(DIAGNOSER_IMPLS)],
+        help="진단기. 여러 번 주면 방식별로 돈다(기본 replay: 저장된 진단 재생)",
+    )
+    _add_glm_args(p)
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("report", help="라운드 기록으로 지표와 결과 화면 생성")
@@ -434,6 +474,11 @@ def _add_breaker_args(p: argparse.ArgumentParser) -> None:
     """Breaker 제안에 쓰는 공통 인자: 대상, 동시 장애 수, GLM 모델과 실행 파일."""
     p.add_argument("--target", default="http://shop.lab/", help="대상 URL")
     p.add_argument("--max-faults", type=int, default=1, help="실험망이 한 라운드에 켤 장애 수")
+    _add_glm_args(p)
+
+
+def _add_glm_args(p: argparse.ArgumentParser) -> None:
+    """GLM을 부르는 쪽(Breaker, GLM 진단기)이 쓰는 인자: 모델과 opencode 실행 파일."""
     p.add_argument("--model", default=DEFAULT_MODEL, help="opencode 모델 ID")
     p.add_argument(
         "--opencode",
