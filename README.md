@@ -1,14 +1,21 @@
 # NetRunner
+
+[![CI](https://github.com/Se-joong-Kim/NetRunner/actions/workflows/ci.yml/badge.svg)](https://github.com/Se-joong-Kim/NetRunner/actions/workflows/ci.yml)
+
 This repo is for a Computer Network project
 
 Breaker(장애를 심는 LLM 에이전트)와 Diagnoser(증상만 듣고 원인을 찾는 LLM 에이전트)를 Docker 실험망에서 겨루게 하고, Python 심판이 정답과 근거를 대조해 채점한다.
 
-| 담당 | 모듈 |
-|---|---|
-| 김승범 | Breaker — `netrunner/breaker.py`의 `Breaker` 구현 |
-| 양시찬 | 실험망 — `netrunner/lab.py`의 `Lab` 구현, `config/lab.json` |
-| 이현섭 | Diagnoser — `netrunner/diagnoser.py`의 `Diagnoser` 구현 |
-| 김세중 | 심판과 통합 — `referee.py`, `validate.py`, `scoring.py`, `report.py` |
+| 담당 | 모듈 | 담당 파일 |
+|---|---|---|
+| 김승범 | Breaker | `netrunner/breaker.py`, `breaker_prompt.py`, `glm_client.py`, `config/opencode_sandbox.json`, `fixtures/d2_ip_classes/`, `tests/test_breaker.py`, `test_glm_client.py`, `test_propose.py` |
+| 양시찬 | 실험망 | `netrunner/lab.py`, `docker_lab.py`, `config/lab.json`, `lab/`, `compose.yaml`, `tests/test_docker_lab.py`, `docs/plan-Yang.md`, `docs/work-summary-Yang.md` |
+| 이현섭 | Diagnoser | `netrunner/diagnoser.py`, `http_lab.py`, `http_demo.py`, `labs/http/`, `config/http_lab.json`, `fixtures/http/`, `docs/http-lab.md`, `tests/test_http_diagnoser.py`, `test_http_lab.py` |
+| 김세중 | 심판과 통합 | `netrunner/referee.py`, `validate.py`, `scoring.py`, `report.py`, `toolbox.py`, `__main__.py`, `__init__.py`, `fixtures/first_integration/`, `fixtures/scoring_examples/`, `docs/superpowers/`, `tests/test_judge.py`, `test_run.py`, `test_toolbox.py`, `test_tools.py` |
+| 계약 | 바꾸면 영향을 받는 담당자 모두 승인 | `docs/interfaces.md`, `netrunner/contracts.py`, `faults.py`, `tools.py` |
+| 공용 | 바꾸면 팀원 한 명 이상 승인 | `CLAUDE.md`, `README.md`, `pyproject.toml`, `uv.lock`, `.github/`, `.gitignore`, `.gitattributes`, `docs/planning/` |
+
+`main`에는 PR로만 합친다. 자기 담당 파일만 바꾼 PR은 CI(초록 체크)가 통과하면 올린 사람이 바로 합치고, 다른 담당자의 파일·계약·공용 파일을 바꾼 PR은 위 표의 승인을 받은 뒤 합친다. 자세한 규칙은 [CLAUDE.md의 GitHub 협업](CLAUDE.md#github-협업)에 있다.
 
 모듈 사이 데이터 형식과 장애 목록: [docs/interfaces.md](docs/interfaces.md)
 
