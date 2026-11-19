@@ -23,6 +23,7 @@ uv run netrunner run --impl docker --repeat 3   # 같은 고정 세트를 실제
 uv run netrunner lab-check --repeat 3           # 심판 없이 실험망 단계만 확인 (AI 진단·채점 없음)
 uv run netrunner report ~/netrunner-private/runs/<rounds.jsonl> --html ~/netrunner-private/report.html
 uv run netrunner breaker-propose --n 3 --opencode <opencode 경로>   # Breaker 제안을 실험망 없이 n번 받아 검사 통과율을 셈
+uv run netrunner match --rounds 3 --opencode <opencode 경로>        # Breaker 제안을 심판·실험망으로 돌려 대결(진단기 기본 none)
 ```
 
 Docker 실험망은 저장소 루트에서 띄우고 내린다. 이미지를 먼저 빌드해야 한다.
@@ -46,9 +47,10 @@ uv run ruff format
 
 - `contracts.py`: 모듈 사이에 오가는 모든 데이터 클래스. 각 `from_dict`가 필수 키와 타입을 검사하고 `ContractError`를 낸다.
 - `breaker.py`, `lab.py`, `diagnoser.py`: 담당자가 구현할 경계. 각각 `typing.Protocol`(`Breaker`, `Lab`, `Diagnoser`)과 그 자리를 대신하는 스탠드인(`FixedBreaker`, `MockLab`, `ReplayDiagnoser`)이 같이 있다. 실제 구현이 생기면 `Referee(lab=..., diagnoser=...)`에 같은 형태로 꽂는다.
-- `breaker.py`의 `LLMBreaker`: 모델 호출 함수 `complete(prompt) -> str`을 인자로 받아 시나리오를 제안하고 검사한다. 호출 실패는 `CompletionError`로 올라오며 재시도 횟수에 센다. 모델 연결(진입점에서 `complete`를 만드는 일)은 아직 없다.
+- `breaker.py`의 `LLMBreaker`: 모델 호출 함수 `complete(prompt) -> str`을 인자로 받아 시나리오를 제안하고 검사한다. 호출 실패는 `CompletionError`로 올라오며 재시도 횟수에 센다. 진입점(`breaker-propose`, `match`)이 `glm_client.OpencodeComplete`로 `complete`를 만든다.
 - `breaker_prompt.py`: `LLMBreaker`가 쓸 프롬프트 문자열을 만든다. 외부 호출은 하지 않는다.
 - `docker_lab.py`: `Lab`의 실제 구현(Docker Compose 실험망, D2·T2). `__main__.py`의 `LAB_IMPLS`에 등록해 `run --impl`로 고른다.
+- `__main__.py`의 `DIAGNOSER_IMPLS`: `match`에 꽂을 진단기. 실제 Diagnoser가 생기면 여기에 한 줄 등록한다. 기본 `none`(`NoDiagnosis`)은 원인을 답하지 않는 자리표시라, Diagnoser 없이도 Breaker 제안의 검증 통과·재현·정상화를 잴 수 있다. 기록의 `model`이 `none`이라 진단 지표와 섞이지 않는다.
 - `tools.py`: Diagnoser가 쓰는 검사 도구 목록의 단일 출처(이름, 인자, 허용 값, LLM용 설명, 방식별 묶음).
 - `toolbox.py`: 심판이 라운드마다 만들어 Diagnoser에 넘기는 도구 창구. 인자·한도를 검사하고 실제 출력을 기록하며, 채점은 이 기록으로만 한다. 실험망 쪽은 `lab.py`의 `ProbeRunner.run_probe` 하나를 구현한다.
 - `faults.py`: 장애 16종의 단일 출처. 정답 라벨, 매개변수 범위, 관측 차단 여부, 근거 지지 판정용 신호를 가진다. 검증, 채점, 보고서가 모두 여기서 읽는다.
@@ -90,7 +92,7 @@ opencode는 GLM 호출(Breaker)과 개발 에이전트에 쓴다. 원칙은 허�
 - 샌드박스가 실제로 막는지는 기록으로 확인한다. 방법: 저장소 `runs/`에 카나리 파일(확인용 문자열 한 줄)을 두고, `OPENCODE_CONFIG_CONTENT`로 읽기·검색·편집·셸을 허용한 대조군과 실제 설정에 같은 요청을 보낸다. `opencode run --format json` 출력의 도구 호출 결과에 카나리가 나오는지 본다. 대조군에서는 나오고 실제 설정에서는 나오지 않아야 한다. 카나리 파일은 확인 뒤 지운다. 카나리 실행 기록(정답이 아니라 확인용 문자열만 든다)은 `~/netrunner-private/runs/control/`에 둔다. "거부합니다"라는 대답만으로는 증거가 아니다.
 - 인증과 기록 파일(`~/.local/share/opencode/auth.json`, `~/.config/opencode/service.json`, `~/.local/share/opencode/opencode.db`와 `-wal`·`-shm`, `~/netrunner-private/`의 파일)은 600으로 둔다. 폴더는 `~/netrunner-private/`와 그 안 `runs/`만 700이다. 기록 폴더와 파일은 코드(`records.py`)가 새로 만들 때 700과 600으로 만든다. 이미 있던 폴더의 권한은 바꾸지 않으므로, 예전에 만든 `~/netrunner-private/`는 사람이 `chmod 700`으로 맞춘다. opencode 인증·설정 파일도 사람이 맞춘다(셸 기본 umask는 0002라 새 파일은 664가 된다). 키와 비밀번호 값은 출력하거나 저장소에 넣지 않는다. 확인이 필요하면 이름과 권한만 본다.
 - 토큰이나 키를 검색하지 않는다. 환경변수는 이름 목록만 보고 값은 보지 않는다.
-- 정답이 든 기록(라운드 기록, Breaker 호출 기록, 제안 시나리오, `lab-check` 기록, `report`의 HTML)은 저장소 밖 `~/netrunner-private/`(700)에 둔다. `demo`, `run`, `lab-check`, `breaker-propose`의 `--out` 기본값이 `~/netrunner-private/runs`이고, `report`는 `--html ~/netrunner-private/...`로 쓴다. 저장소의 `runs/`에 두지 않는다. 이 폴더는 opencode 에이전트의 `external_directory` 거부로 에이전트가 읽지 못한다. `http_demo`의 기본값은 담당자(이현섭)가 #22에서 바꾼다.
+- 정답이 든 기록(라운드 기록, Breaker 호출 기록, 제안 시나리오, `lab-check` 기록, `report`의 HTML)은 저장소 밖 `~/netrunner-private/`(700)에 둔다. `demo`, `run`, `lab-check`, `breaker-propose`, `match`의 `--out` 기본값이 `~/netrunner-private/runs`이고, `report`는 `--html ~/netrunner-private/...`로 쓴다. 저장소의 `runs/`에 두지 않는다. 이 폴더는 opencode 에이전트의 `external_directory` 거부로 에이전트가 읽지 못한다. `http_demo`의 기본값은 담당자(이현섭)가 #22에서 바꾼다.
 - 실험망 캡처(`captures/`의 pcap)는 주입 중 DNS와 TCP 흔적을 담아 정답 단서가 될 수 있다. 지금은 저장소의 `captures/`(root 소유, git 제외)에 쌓인다. 옮기는 결정은 실험망 담당이 한다.
 - opencode 세션 데이터베이스(`~/.local/share/opencode/opencode.db`)에는 정답 시나리오가 평문으로 남는다. opencode 서비스가 이 파일을 쓰는 중이라 옮기지 않는다. 정리(보존 기간, 세션 삭제, 서비스 중지)는 사용자가 정한다. 정할 때까지 이 파일을 공유하거나 커밋하지 않는다.
 - 실험망 컨테이너는 `privileged`, `network_mode: host`, 장치 마운트, Docker 소켓 마운트를 쓰지 않는다. `NET_ADMIN`과 `NET_RAW`는 필요한 컨테이너에만 준다. 쓰지 않을 때는 `docker compose down`으로 내린다.

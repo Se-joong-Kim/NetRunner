@@ -39,7 +39,7 @@ def test_default_runs_dir_is_private_and_outside_repo(home):
     assert ROOT not in d.parents
 
 
-@pytest.mark.parametrize("cmd", ["demo", "run", "lab-check", "breaker-propose"])
+@pytest.mark.parametrize("cmd", ["demo", "run", "lab-check", "breaker-propose", "match"])
 def test_commands_write_to_private_runs_by_default(home, cmd):
     assert Path(build_parser().parse_args([cmd]).out) == home / "netrunner-private" / "runs"
 

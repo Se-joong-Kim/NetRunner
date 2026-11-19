@@ -11,7 +11,7 @@ Breaker(장애를 심는 LLM 에이전트)와 Diagnoser(증상만 듣고 원인�
 | 김승범 | Breaker | `netrunner/breaker.py`, `breaker_prompt.py`, `glm_client.py`, `config/opencode_sandbox.json`, `fixtures/d2_ip_classes/`, `tests/test_breaker.py`, `test_glm_client.py`, `test_propose.py` |
 | 양시찬 | 실험망 | `netrunner/lab.py`, `docker_lab.py`, `config/lab.json`, `lab/`, `compose.yaml`, `tests/test_docker_lab.py`, `docs/plan-Yang.md`, `docs/work-summary-Yang.md` |
 | 이현섭 | Diagnoser | `netrunner/diagnoser.py`, `http_lab.py`, `http_demo.py`, `labs/http/`, `config/http_lab.json`, `fixtures/http/`, `docs/http-lab.md`, `tests/test_http_diagnoser.py`, `test_http_lab.py` |
-| 김세중 | 심판과 통합 | `netrunner/referee.py`, `validate.py`, `scoring.py`, `report.py`, `toolbox.py`, `records.py`, `__main__.py`, `__init__.py`, `fixtures/first_integration/`, `fixtures/scoring_examples/`, `docs/superpowers/`, `tests/test_judge.py`, `test_run.py`, `test_toolbox.py`, `test_tools.py`, `test_records.py` |
+| 김세중 | 심판과 통합 | `netrunner/referee.py`, `validate.py`, `scoring.py`, `report.py`, `toolbox.py`, `records.py`, `__main__.py`, `__init__.py`, `fixtures/first_integration/`, `fixtures/scoring_examples/`, `docs/superpowers/`, `tests/test_judge.py`, `test_run.py`, `test_toolbox.py`, `test_tools.py`, `test_records.py`, `test_match.py` |
 | 계약 | 모듈 사이 데이터 형식 | `docs/interfaces.md`, `netrunner/contracts.py`, `faults.py`, `tools.py` |
 | 공용 | 팀 공용 파일 | `CLAUDE.md`, `README.md`, `pyproject.toml`, `uv.lock`, `.github/`, `.gitignore`, `.gitattributes`, `docs/planning/` |
 
@@ -35,11 +35,14 @@ docker build -t netrunner-lab ./lab
 docker compose up -d --no-build
 uv run netrunner run --impl docker --repeat 3   # 심판으로 D2·T2를 3번씩 반복
 uv run netrunner lab-check --repeat 3           # 심판 없이 실험망 단계만 확인
+uv run netrunner match --rounds 3 --opencode <opencode 경로>   # Breaker 제안으로 대결(진단기 기본 none)
 NETRUNNER_INTEGRATION=1 uv run pytest
 docker compose down
 ```
 
 `run`은 고정 세트(`--dir`, 기본 `fixtures/first_integration`)를 심판으로 `--repeat`번 돌리고, 결과 표와 화면을 `--out`(기본 `~/netrunner-private/runs`, 저장소 밖)에 남긴다. 진단은 저장된 결과를 재생하므로 AI 진단 성능이 아니라 실험망의 재현·정상화와 심판 경로를 확인하는 용도다. 결과 표의 `증상 재현`과 `초기화 확인` 열이 완료 기준(반복 시도 중 재현·정상화 성공 건수)이다. 정상화가 확인되지 않으면 그 자리에서 멈춘다. `--impl mock`은 모의 실험망으로 같은 과정을 돌리며, `demo`는 `run --impl mock --repeat 1`과 같다.
+
+`match`는 Breaker가 GLM으로 낸 시나리오를 심판이 라운드마다 검증, 주입, 재현 확인, 진단, 채점, 정상화 확인까지 돌린다. 끝나면 진단 지표 표와 함께 Breaker 제안의 검증 거부, 증상 재현, 정상화 확인 수를 보여 준다. 진단기는 `--diagnoser`로 고르고, 실제 Diagnoser가 들어오기 전에는 원인을 답하지 않는 자리표시(`none`)를 쓴다.
 
 `lab-check`는 각 장애의 정상 접속, 주입, 증상 확인, 복구, 정상화를 차례로 실행한다. 결과는 `--out` 폴더의 JSONL, 클라이언트 패킷 캡처는 `captures/`의 pcap에 저장한다. `lab-check`는 AI 진단과 채점을 수행하지 않는다.
 
