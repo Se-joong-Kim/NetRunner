@@ -9,6 +9,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from .child_env import child_environment
 from .contracts import FaultSpec, LabResult, Scenario
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -103,6 +104,7 @@ class HttpDockerLab:
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            env=child_environment(os.environ),
         )
         observation = {
             "command": ["docker", *command[1:]],
