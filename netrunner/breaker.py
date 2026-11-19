@@ -6,6 +6,7 @@ history는 채점이 끝난 대결 라운드의 BreakerFeedback 목록이다.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -13,9 +14,13 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .breaker_prompt import build_prompt, with_rejection
+from .breaker_strategy import plan, refused_values, signature
 from .contracts import BreakerFeedback, Scenario
-from .faults import FAULTS
-from .validate import LabInfo, validate
+from .validate import MAX_FAULTS, LabInfo, validate
+
+
+def _discard(record: dict) -> None:
+    """기록 함수를 주지 않았을 때 쓰는 빈 기록 함수."""
 
 
 class Breaker(Protocol):
@@ -46,14 +51,24 @@ class BreakerError(RuntimeError):
     """정해진 횟수 안에 유효한 제안을 만들지 못했다."""
 
 
+class CompletionError(RuntimeError):
+    """complete 함수가 호출에 실패했다(네트워크, API 오류, 응답 잘림 등)."""
+
+
 @dataclass
 class ProposalStats:
     """모델 호출 한 번마다 결과를 세는 기록. 제안 품질 보고에 쓴다."""
 
     calls: int = 0
+    api_errors: int = 0  # 호출 자체가 실패함(CompletionError)
     unparsable: int = 0  # JSON이나 시나리오 형식이 아님
     duplicate: int = 0  # 이미 낸 장애 조합·매개변수와 같음
     invalid: int = 0  # 심판 검증 규칙에 걸림
+    masked: int = 0  # 앞 단계 장애에 가려 클라이언트에서 볼 수 없음
+    over_limit: int = 0  # 실험망이 동시에 켤 수 있는 장애 수를 넘음
+    lab_refused: int = (
+        0  # 실험망 호스트 주소를 IP로 씀(주입되지 않음). 정상 서버 주소는 validate가 먼저 거부
+    )
     accepted: int = 0
 
     @property
@@ -79,18 +94,9 @@ def parse_proposal(text: str) -> dict:
     raise ValueError("JSON 객체가 없음")
 
 
-def _signature(sc: Scenario) -> tuple:
-    """중복 판정 키: 장애 ID와 실제 적용되는 매개변수 값.
-
-    생략된 선택 매개변수는 None, 생략된 domain은 대상 도메인으로 본다.
-    증상 문장과 메모는 보지 않는다.
-    """
-    items = []
-    for f in sc.faults:
-        names = FAULTS[f.id].params if f.id in FAULTS else f.params
-        values = {n: f.params.get(n, sc.domain if n == "domain" else None) for n in sorted(names)}
-        items.append((f.id, json.dumps(values, sort_keys=True)))
-    return tuple(sorted(items))
+def _plain(text: str) -> str:
+    """인코딩할 수 없는 문자(짝 없는 서로게이트)를 이스케이프해 기록과 프롬프트에 안전하게 쓴다."""
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 class LLMBreaker:
@@ -99,6 +105,12 @@ class LLMBreaker:
     complete는 프롬프트를 받아 응답 문자열을 돌려주는 함수다. 모델 공급자와
     호출 방식은 이 함수를 만드는 진입점이 정한다. 시나리오 ID와 대상 URL은
     이 클래스가 정하고, 모델은 장애·증상·메모만 낸다.
+
+    max_faults는 실험망이 한 라운드에 켤 수 있는 동시 장애 수다. 진입점이
+    실험망 구현에 맞춰 넘긴다.
+
+    record는 모델 호출 한 번마다 {call, target_url, attempt, prompt_sha256,
+    raw, verdict}를 받는 함수다. 호출 실패는 raw가 None이다. 기본값은 버린다.
     """
 
     def __init__(
@@ -107,30 +119,73 @@ class LLMBreaker:
         lab: LabInfo,
         target_url: str,
         max_attempts: int = 3,
+        max_faults: int = MAX_FAULTS,
+        record: Callable[[dict], None] = _discard,
     ):
         self._complete = complete
         self._lab = lab
         self._target_url = target_url
         self._max_attempts = max_attempts
+        self._max_faults = max_faults
+        self._record = record
         self._seen: set[tuple] = set()
         self.stats = ProposalStats()
 
     def propose(self, history: list[BreakerFeedback]) -> Scenario:
         """지난 라운드를 반영한 프롬프트로 제안을 받아 검사를 통과한 것을 낸다.
 
-        거부 사유는 다음 시도의 프롬프트에 붙는다. max_attempts번 안에
-        통과하지 못하면 BreakerError.
+        채점이 끝난 유효 라운드의 장애 조합도 중복으로 본다(프롬프트의 "반복하지
+        않는다"와 같은 기준). 거부된 라운드는 빼는데, 그래야 같은 장애를 증상만
+        고쳐 다시 낼 수 있다. 거부 사유는 다음 시도의 프롬프트에 붙는다. 호출
+        실패도 한 번의 시도로 세며 사유는 붙이지 않는다. max_attempts번 안에
+        통과하지 못하면 BreakerError. 출제 힌트(plan)는 유효 라운드만으로 계산한다.
         """
-        prompt = build_prompt(history, self._target_url, self._lab)
+        target = Scenario(scenario_id="", target_url=self._target_url, faults=[], complaint="")
+        self._seen.update(signature(fb.faults, target.domain) for fb in history if fb.valid)
+        hints = plan(history, self._lab, self._target_url, self._max_faults)
+        prompt = build_prompt(
+            history,
+            self._target_url,
+            self._lab,
+            exhausted=hints.exhausted,
+            max_faults=self._max_faults,
+            hints=hints,
+        )
         reason = ""
-        for _ in range(self._max_attempts):
-            text = self._complete(with_rejection(prompt, reason) if reason else prompt)
+        last_error = ""
+        for attempt in range(1, self._max_attempts + 1):
+            sent = with_rejection(prompt, reason) if reason else prompt
+            try:
+                text = self._complete(sent)
+            except CompletionError as e:
+                # 호출 실패에는 새 사유를 붙이지 않는다. 앞선 거부 사유는 남겨 둔다.
+                self.stats.calls += 1
+                self.stats.api_errors += 1
+                last_error = str(e)
+                self._journal(attempt, sent, None, f"API 오류: {e}")
+                continue
             self.stats.calls += 1
             sc, reason = self._check(text)
+            reason = _plain(reason)
+            self._journal(attempt, sent, text, reason or "채택")
             if sc is not None:
                 self.stats.accepted += 1
                 return sc
-        raise BreakerError(f"{self._max_attempts}회 시도 안에 유효한 제안 없음: {reason}")
+        detail = reason or f"API 오류: {last_error}"
+        raise BreakerError(f"{self._max_attempts}회 시도 안에 유효한 제안 없음: {detail}")
+
+    def _journal(self, attempt: int, sent: str, raw: str | None, verdict: str) -> None:
+        """모델 호출 한 번의 프롬프트 해시, 원문, 판정을 기록 함수에 넘긴다."""
+        self._record(
+            {
+                "call": self.stats.calls,
+                "target_url": self._target_url,
+                "attempt": attempt,
+                "prompt_sha256": hashlib.sha256(sent.encode("utf-8")).hexdigest(),
+                "raw": raw,
+                "verdict": verdict,
+            }
+        )
 
     def _check(self, text: str) -> tuple[Scenario | None, str]:
         """출력 하나를 시나리오로 바꿔 검사한다. (시나리오, '') 또는 (None, 사유)."""
@@ -141,6 +196,11 @@ class LLMBreaker:
             # 모델 출력은 신뢰하지 않는다. 타입이 틀리면 검증 전에 형식 오류로 센다.
             if not isinstance(faults, list) or not isinstance(complaint, str):
                 raise ValueError("faults는 목록, complaint는 문자열이어야 함")
+            # FaultSpec.from_dict는 params 목록을 조용히 dict로 바꾼다. 변환 전에 원본을 본다.
+            for item in faults:
+                params = item.get("params") if isinstance(item, dict) else None
+                if not isinstance(item, dict) or not isinstance(params or {}, dict):
+                    raise ValueError("장애는 {id, params} 객체여야 하고 params는 객체여야 함")
             sc = Scenario.from_dict(
                 {
                     "scenario_id": f"BR-{self.stats.accepted + 1:03d}",
@@ -151,9 +211,9 @@ class LLMBreaker:
                     "origin": "breaker",
                 }
             )
-            if not all(isinstance(f.id, str) and isinstance(f.params, dict) for f in sc.faults):
-                raise ValueError("장애 ID는 문자열, params는 객체여야 함")
-            key = _signature(sc)
+            if not all(isinstance(f.id, str) for f in sc.faults):
+                raise ValueError("장애 ID는 문자열이어야 함")
+            key = signature(sc.faults, sc.domain)
         except (ValueError, TypeError) as e:
             self.stats.unparsable += 1
             return None, f"형식 오류: {e}"
@@ -163,6 +223,22 @@ class LLMBreaker:
         v = validate(sc, self._lab)
         if not v.ok:
             self.stats.invalid += 1
-            return None, "; ".join(v.errors)
-        self._seen.add(key)
+            reason = "; ".join(v.errors)
+            if any("원인 단서" in e for e in v.errors):
+                reason += ". 그 단어를 빼고 같은 장애로 다시 쓴다"
+            return None, reason
+        refused = sorted({v for f in sc.faults for v in refused_values(f, self._lab)})
+        if refused:
+            self.stats.lab_refused += 1
+            return None, f"실험망이 주입하지 않는 주소를 씀: {', '.join(refused)}"
+        if len(sc.faults) > self._max_faults:
+            self.stats.over_limit += 1
+            return None, (
+                f"장애 {len(sc.faults)}개를 냈다. 실험망 한도는 {self._max_faults}개이므로"
+                " 한 개만 고른다"
+            )
+        hidden = [f.id for f, seen in zip(sc.faults, v.observable, strict=True) if not seen]
+        if hidden:
+            self.stats.masked += 1
+            return None, f"앞 단계 장애에 가려 관측할 수 없음: {', '.join(hidden)}"
         return sc, ""

@@ -1,0 +1,7 @@
+{
+  "_note": "HTTP 단독 실험망. nginx는 Docker 서비스 이름. IP 항목은 주소 검증용이며 고정 컨테이너 IP를 뜻하지 않음.",
+  "domains": ["nginx"],
+  "web_ip": "127.0.0.1",
+  "subnet": "127.0.0.0/8",
+  "enabled_faults": ["H1"]
+}

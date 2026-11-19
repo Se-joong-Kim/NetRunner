@@ -1,4 +1,4 @@
-"""python -m netrunner {validate|demo|run|report|lab-check} 명령 진입점.
+"""python -m netrunner {validate|demo|run|report|lab-check|breaker-propose} 명령 진입점.
 
 객체를 조립하는 가장 바깥 층이다.
 """
@@ -7,22 +7,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
+from .breaker import BreakerError, LLMBreaker, ProposalStats
+from .breaker_log import CallJournal
+from .breaker_strategy import signature
 from .contracts import Scenario, read_json
 from .diagnoser import ReplayDiagnoser
 from .docker_lab import DockerLab
-from .lab import Lab, MockLab
-from .referee import Referee
+from .glm_client import DEFAULT_MODEL, OpencodeComplete
+from .lab import Lab, MockLab, ReplayRunner
+from .referee import Referee, feedback_for
 from .report import format_table, load_records, render_html, summarize
 from .validate import LabInfo, validate
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LAB = ROOT / "config" / "lab.json"
+DEFAULT_SANDBOX = ROOT / "config" / "opencode_sandbox.json"
 
 
 def cmd_validate(args) -> int:
@@ -47,23 +53,34 @@ LAB_IMPLS: dict[str, Callable[[Path], Lab]] = {
 }
 
 
+# 실험망 자체가 검사 도구(run_probe)를 실행하는 구현. 여기 없는 구현은 저장된
+# 진단의 검사 출력을 재생한다. DockerLab.run_probe가 생기면 "docker"를 넣는다.
+PROBES_FROM_LAB: frozenset[str] = frozenset()
+
+
 def make_lab(impl: str, config: str | Path) -> Lab:
     """이름으로 실험망 구현을 만든다. config는 실험망 주소 JSON 경로다."""
     return LAB_IMPLS[impl](Path(config))
 
 
-def run_fixed_rounds(referee: Referee, scenario_files: list[Path], repeat: int = 1) -> list[dict]:
+def run_fixed_rounds(
+    referee: Referee, scenario_files: list[Path], repeat: int = 1, replay_probes: bool = True
+) -> list[dict]:
     """고정 시나리오를 저장된 진단과 짝지어 repeat번 돌린다.
 
-    정상화가 확인되지 않으면 오염된 실험망이므로 그 자리에서 멈춘다
-    (referee.run_match와 같은 규칙).
+    replay_probes면 라운드마다 그 진단의 저장 검사 출력을 검사 실행기로
+    꽂는다. 정상화가 확인되지 않으면 오염된 실험망이므로 그 자리에서
+    멈춘다(referee.run_match와 같은 규칙).
     """
     records: list[dict] = []
     for _ in range(repeat):
         for sf in scenario_files:
             # 검증에서 거부되는 시나리오는 진단 파일이 없어도 된다.
             df = sf.with_name(sf.name.replace(".scenario.", ".diagnosis."))
-            referee.diagnoser = ReplayDiagnoser([read_json(df)] if df.exists() else [])
+            saved = [read_json(df)] if df.exists() else []
+            referee.diagnoser = ReplayDiagnoser(saved)
+            if replay_probes:
+                referee.runner = ReplayRunner.from_diagnoses(saved)
             records.append(referee.run_round(Scenario.from_dict(read_json(sf))))
             if records[-1]["reset_verified"] is False:
                 return records
@@ -84,13 +101,18 @@ def cmd_run(args) -> int:
     out = Path(args.out)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     records_path = out / f"rounds-{d.name}-{args.impl}-{stamp}.jsonl"
+    lab = make_lab(args.impl, args.lab)
+    probes_from_lab = args.impl in PROBES_FROM_LAB
     referee = Referee(
-        make_lab(args.impl, args.lab),
+        lab,
         ReplayDiagnoser([]),
         LabInfo.load(args.lab),
         records_path=records_path,
+        runner=lab if probes_from_lab else None,
     )
-    records = run_fixed_rounds(referee, scenario_files, args.repeat)
+    records = run_fixed_rounds(
+        referee, scenario_files, args.repeat, replay_probes=not probes_from_lab
+    )
     stopped = records[-1]["reset_verified"] is False
     if stopped:
         print("정상화 미확인: 나머지 라운드를 중단함", file=sys.stderr)
@@ -180,6 +202,82 @@ def cmd_lab_check(args) -> int:
     return 0
 
 
+def format_proposal_summary(
+    stats: ProposalStats, requested: int, accepted: int, distinct: int
+) -> str:
+    """제안 품질 지표를 사람이 읽을 줄로 만든다. 채택률은 채택 수를 호출 수로 나눈다."""
+    calls = max(stats.calls, 1)
+    return "\n".join(
+        [
+            f"제안 요청 {requested}회, 채택 {accepted}회, 서로 다른 조합 {distinct}개",
+            f"모델 호출 {stats.calls}회(제안당 평균 {stats.calls / requested:.2f}회)",
+            f"채택률(채택/호출) {stats.accepted / calls:.0%}, "
+            f"형식 오류율 {stats.unparsable / calls:.0%}",
+            f"거부: 형식 {stats.unparsable}, 중복 {stats.duplicate}, 검증 {stats.invalid}, "
+            f"실험망 주소 {stats.lab_refused}, 동시 장애 초과 {stats.over_limit}, "
+            f"가려짐 {stats.masked}, API 오류 {stats.api_errors}",
+        ]
+    )
+
+
+def cmd_breaker_propose(args) -> int:
+    """GLM으로 시나리오를 n번 제안받아 검사 통과율을 센다. 실험망은 건드리지 않는다.
+
+    모델 호출마다 원문과 판정을 breaker-<시각>.jsonl에 --out 폴더로 남긴다.
+    채택된 시나리오는 하나씩 breaker-propose-<시각>-NN.scenario.json 파일로
+    채택 즉시 저장한다(뒤의 호출이 실패해도 앞의 것은 남는다). 지난 라운드 기록
+    (--history)이 있으면 그 피드백을 제안 프롬프트에 넣는다. 한 건도 채택되지
+    않으면 1을 돌려준다. n번의 제안은 같은 history로 받는 독립 제안이며, 서로
+    중복으로 막지 않는다(실제 매치의 중복은 history 기준으로만 판정한다).
+    """
+    if args.n < 1:
+        print("--n은 1 이상이어야 함", file=sys.stderr)
+        return 1
+    probe = Scenario(scenario_id="", target_url=args.target, faults=[], complaint="")
+    try:
+        _ = (probe.domain, probe.port)
+    except ValueError:
+        print(f"대상 URL이 잘못됨: {args.target}", file=sys.stderr)
+        return 1
+    info = LabInfo.load(args.lab)
+    history = []
+    if args.history:
+        history = [fb for rec in load_records(args.history) if (fb := feedback_for(rec))]
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    journal = out / f"breaker-{stamp}.jsonl"
+    complete = OpencodeComplete(
+        binary=args.opencode, root=ROOT, config=DEFAULT_SANDBOX, model=args.model
+    )
+    breaker = LLMBreaker(
+        complete, info, args.target, max_faults=args.max_faults, record=CallJournal(journal)
+    )
+    accepted: list[Scenario] = []
+    stem = f"breaker-propose-{stamp}"
+    for _ in range(args.n):
+        try:
+            sc = breaker.propose(history)
+        except BreakerError as e:
+            print(f"제안 실패: {e}", file=sys.stderr)
+            continue
+        accepted.append(sc)
+        path = out / f"{stem}-{len(accepted):02d}.scenario.json"
+        path.write_text(
+            json.dumps(asdict(sc), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    distinct = len({signature(sc.faults, sc.domain) for sc in accepted})
+    print(format_proposal_summary(breaker.stats, args.n, len(accepted), distinct))
+    print(f"\n호출 기록: {journal}")
+    if not accepted:
+        return 1
+    print(
+        f"채택 시나리오: {out / stem}-*.scenario.json ({len(accepted)}개, "
+        "netrunner validate로 검사 가능)"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """명령줄 인자를 해석해 하위 명령을 실행한다."""
     ap = argparse.ArgumentParser(prog="netrunner", description="NetRunner 심판·통합 도구")
@@ -212,6 +310,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", default=str(ROOT / "runs"))
     p.add_argument("--repeat", type=int, default=1)
     p.set_defaults(func=cmd_lab_check)
+
+    p = sub.add_parser(
+        "breaker-propose", help="GLM으로 시나리오를 제안받아 검사 통과율을 셈(실험망 미사용)"
+    )
+    p.add_argument("--n", type=int, default=1, help="제안을 받을 횟수")
+    p.add_argument("--target", default="http://shop.lab/", help="대상 URL")
+    p.add_argument("--max-faults", type=int, default=1, help="실험망이 한 라운드에 켤 장애 수")
+    p.add_argument("--history", help="지난 라운드 기록 JSONL(없으면 첫 제안)")
+    p.add_argument("--model", default=DEFAULT_MODEL, help="opencode 모델 ID")
+    p.add_argument(
+        "--opencode",
+        default=os.environ.get("NETRUNNER_OPENCODE", "opencode"),
+        help="opencode 실행 파일 경로(기본: NETRUNNER_OPENCODE 또는 PATH의 opencode)",
+    )
+    p.add_argument("--out", default=str(ROOT / "runs"), help="호출 기록과 채택 시나리오 폴더")
+    p.set_defaults(func=cmd_breaker_propose)
 
     args = ap.parse_args(argv)
     return args.func(args)

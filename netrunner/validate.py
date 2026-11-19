@@ -6,6 +6,7 @@ import ipaddress
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .contracts import Scenario, read_json
 from .faults import FAULTS, Fault
@@ -69,6 +70,10 @@ CONFLICT_GROUPS = (
 
 MAX_FAULTS = 3
 MAX_COMPLAINT_LEN = 300
+URL_MAX_LEN = 200
+# 실험망 URL에 쓸 수 있는 문자. 셸 메타문자, curl 글롭 문자([]{}), 공백,
+# 사용자 정보(@)는 받지 않는다. 검사 도구가 인자를 그대로 넘기기 때문이다.
+_URL_CHARS = re.compile(r"[A-Za-z0-9\-._~:/?=&%+]+")
 
 
 @dataclass
@@ -79,12 +84,17 @@ class LabInfo:
     web_ip: str
     subnet: str
     enabled_faults: list[str] = field(default_factory=lambda: sorted(FAULTS))
+    # 이름 → IP. 검사 도구가 DNS 서버 이름(dns, alt_dns)을 IP로 확인할 때 쓴다.
+    hosts: dict[str, str] = field(default_factory=dict)
+    # 실험망이 실행할 수 있는 검사 도구. 없으면 도구를 쓸 수 없다.
+    enabled_tools: list[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: str | Path) -> LabInfo:
         """config/lab.json 형식의 파일에서 실험망 정보를 읽는다."""
         d = read_json(path)
-        extra = {"enabled_faults": d["enabled_faults"]} if "enabled_faults" in d else {}
+        optional = ("enabled_faults", "hosts", "enabled_tools")
+        extra = {k: d[k] for k in optional if k in d}
         return cls(domains=d["domains"], web_ip=d["web_ip"], subnet=d["subnet"], **extra)
 
 
@@ -157,29 +167,45 @@ def _check_param(fault: Fault, name: str, value, scenario: Scenario, lab: LabInf
     return None
 
 
+def lab_url_error(url: object, lab: LabInfo) -> str | None:
+    """실험망 URL 규칙. 시나리오 대상과 검사 도구 인자가 같은 규칙을 쓴다.
+
+    규칙이 둘로 나뉘면 Breaker가 통과시킨 대상을 Diagnoser가 검사하지
+    못하는 라운드가 생긴다. 오류 문구를 돌려주고, 통과하면 None.
+    """
+    if not isinstance(url, str):
+        return "URL이 문자열이 아님"
+    if len(url) > URL_MAX_LEN:
+        return f"URL이 {URL_MAX_LEN}자를 넘음"
+    try:
+        u = urlsplit(url)
+        port = u.port
+    except ValueError as e:
+        return f"URL 형식 오류 ({e})"
+    if not _URL_CHARS.fullmatch(url):
+        return "URL에 허용되지 않는 문자가 있음"
+    if port == 0:  # urlsplit은 0을 오류 없이 돌려준다
+        return "포트는 1~65535여야 함"
+    if u.scheme not in ("http", "https"):
+        return f"http/https가 아님 ({url})"
+    if u.hostname not in lab.domains:
+        return f"실험망 도메인이 아님 ({u.hostname})"
+    return None
+
+
 def validate(scenario: Scenario, lab: LabInfo) -> ValidationResult:
     """시나리오 하나를 설계안 8장 규칙으로 검사한다."""
     r = ValidationResult()
 
-    # 매개변수 검사가 scenario.port를 쓰므로 URL 형식부터 확인한다.
-    try:
-        u = scenario.url
-        port = u.port
-    except ValueError as e:
-        r.errors.append(f"target_url: URL 형식 오류 ({e})")
+    # 매개변수 검사가 scenario.port를 쓰므로 URL부터 확인한다.
+    url_err = lab_url_error(scenario.target_url, lab)
+    if url_err:
+        r.errors.append(f"target_url: {url_err}")
         return r
-    if port == 0:  # urlsplit은 0을 오류 없이 돌려준다
-        r.errors.append("target_url: 포트는 1~65535여야 함")
-        return r
-    if u.scheme not in ("http", "https"):
-        r.errors.append(f"target_url: http/https가 아님 ({scenario.target_url})")
-        return r
+    u = scenario.url
     https_needed = [s.id for s in scenario.faults if s.id in FAULTS and FAULTS[s.id].https_only]
     if https_needed and u.scheme != "https":
         r.errors.append(f"target_url: {https_needed}은(는) https URL에서만 관측됨")
-
-    if scenario.domain not in lab.domains:
-        r.errors.append(f"target_url: 실험망 도메인이 아님 ({scenario.domain})")
 
     if not 1 <= len(scenario.faults) <= MAX_FAULTS:
         r.errors.append(f"faults: 1~{MAX_FAULTS}개여야 함 (현재 {len(scenario.faults)}개)")

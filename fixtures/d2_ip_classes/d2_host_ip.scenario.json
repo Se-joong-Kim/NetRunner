@@ -1,0 +1,8 @@
+{
+  "scenario_id": "D2-HOST",
+  "target_url": "http://shop.lab/",
+  "faults": [{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.54"}}],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D2 부류 확인 2(호스트 주소): alt_dns 호스트(웹 서비스 없음) IP. 설계안 4.1절 1단계"
+}

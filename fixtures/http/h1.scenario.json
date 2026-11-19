@@ -1,0 +1,8 @@
+{
+  "scenario_id": "HTTP-H1-LOCAL",
+  "target_url": "http://nginx/",
+  "faults": [{"id": "H1", "params": {}}],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "통합 동작 확인용 개발 사례. upstream 포트 8000→8001로 502 재현. 최종 평가 세트와 별개."
+}

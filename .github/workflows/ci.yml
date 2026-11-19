@@ -1,0 +1,33 @@
+# PR과 main 푸시마다 ruff와 pytest를 돌린다.
+# Docker 실험망 테스트와 실제 GLM 호출 테스트는 환경 변수가 없어 건너뛴다.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: 의존성 설치
+        run: uv sync --locked
+      - name: ruff 검사
+        run: uv run ruff check
+      - name: ruff 포맷 검사
+        run: uv run ruff format --check
+      - name: 테스트
+        run: uv run pytest -q

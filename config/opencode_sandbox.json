@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "netrunner": {
+      "mode": "primary",
+      "permission": {
+        "*": "deny",
+        "external_directory": "deny",
+        "read": "deny",
+        "glob": "deny",
+        "grep": "deny",
+        "edit": "deny",
+        "shell": "deny",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "subagent": "deny",
+        "question": "deny",
+        "browser": "deny",
+        "skill": "deny"
+      }
+    }
+  }
+}

@@ -160,11 +160,14 @@ def score(
     diagnosis: Diagnosis,
     elapsed_s: float,
     limits: Limits | None = None,
+    *,
+    probes: list[Probe],
 ) -> Score:
     """정답과 진단을 대조해 라운드 하나를 채점한다.
 
     elapsed_s는 심판이 잰 진단 시간이다. Diagnoser의 자체 보고값
-    (diagnosis.elapsed_s)은 쓰지 않는다.
+    (diagnosis.elapsed_s)은 쓰지 않는다. 근거는 도구 창구가 기록한
+    probes로만 판정하고, Diagnoser가 적은 diagnosis.trace는 보지 않는다.
     """
     faults = [FAULTS[s.id] for s in scenario.faults]
     pairs = _match(diagnosis.findings, faults, observable)
@@ -181,18 +184,16 @@ def score(
     false_positives = [n.label for ni, n in enumerate(diagnosis.findings) if ni not in explained]
 
     # 근거는 실제 정답이 아니라 그 진단이 주장한 원인의 신호를 보이는지로 판정한다.
-    probes = {p.probe_id: p for p in diagnosis.trace}
+    by_id = {p.probe_id: p for p in probes}
     injected = {s.id: s.params for s in scenario.faults}
     checks: list[EvidenceCheck] = []
     for ni, n in enumerate(diagnosis.findings):
         claimed = lookup_fault(n.stage, n.cause)
         patterns = _signal_patterns(claimed, injected.get(claimed.id, {})) if claimed else None
-        checks += _check_evidence(ni, n, probes, patterns)
+        checks += _check_evidence(ni, n, by_id, patterns)
 
     violations = []
     if limits:
-        if len(diagnosis.trace) > limits.max_tool_calls:
-            violations.append(f"검사 {len(diagnosis.trace)}회 > 한도 {limits.max_tool_calls}")
         if diagnosis.llm_calls > limits.max_llm_calls:
             violations.append(f"LLM 호출 {diagnosis.llm_calls}회 > 한도 {limits.max_llm_calls}")
         if elapsed_s > limits.max_seconds:
@@ -209,7 +210,7 @@ def score(
         evidence_valid=sum(c.supported is True for c in checks),
         evidence_unverified=sum(c.exists and c.supported is None for c in checks),
         evidence_total=len(checks),
-        tool_calls=len(diagnosis.trace),
+        tool_calls=len(probes),
         llm_calls=diagnosis.llm_calls,
         tokens=diagnosis.tokens,
         elapsed_s=round(elapsed_s, 3),

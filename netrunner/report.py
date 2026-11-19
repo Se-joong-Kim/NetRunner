@@ -13,6 +13,8 @@ import statistics
 from collections import defaultdict
 from pathlib import Path
 
+from .contracts import Status
+
 VERDICT_KO = {
     "correct": "정답",
     "cause_wrong": "원인 틀림",
@@ -47,16 +49,16 @@ def _reproduced(rec: dict) -> bool:
 def summarize(records: list[dict]) -> list[dict]:
     """모델·방식·세트별 지표.
 
-    검증에서 거부된 제안(rejected)은 Diagnoser가 돌지 않았으므로 뺀다.
+    검증에서 거부된 제안과 Breaker의 제안 실패는 지표에서 뺀다.
     """
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in records:
-        if r["status"] != "rejected":
+        if r["status"] not in (Status.REJECTED, Status.PROPOSAL_FAILED):
             groups[(r["model"], r["method"], r["origin"])].append(r)
 
     rows = []
     for (model, method, origin), rs in sorted(groups.items()):
-        sc = [r["score"] for r in rs if r["status"] == "scored"]
+        sc = [r["score"] for r in rs if r["status"] == Status.SCORED]
         times = [s["elapsed_s"] for s in sc]
         tools = [s["tool_calls"] for s in sc]
         faults = sum(s["scored_faults"] for s in sc)
@@ -82,7 +84,7 @@ def summarize(records: list[dict]) -> list[dict]:
                 "time_med_s": round(statistics.median(times), 2) if times else "-",
                 "time_p95_s": round(p95(times), 2) if times else "-",
                 "fooled": ratio(fooled, len(sc)),
-                # 실험망을 쓴 라운드 중 주입 뒤 증상까지 확인된 비율(11주차 완료 기준)
+                # 실험망을 쓴 라운드 중 주입 뒤 증상까지 확인된 비율
                 "repro": ratio(sum(_reproduced(r) for r in rs), len(rs)),
                 "reset_ok": ratio(
                     sum(r["reset_verified"] is True for r in rs),
@@ -167,6 +169,12 @@ def _mark(v) -> str:
 
 
 def _round_card(r: dict) -> str:
+    if r["status"] == Status.PROPOSAL_FAILED:
+        return (
+            f"<div class='card'><h2>Breaker 제안 실패 · {_e(r['round_id'])}</h2>"
+            f"<p class='warn'>{_e(r['invalid_reason'])}</p>"
+            f"<p class='muted'>{_e(r['finished_at'])}</p></div>"
+        )
     ans = r["answer"]
     head = (
         f"<h2>라운드 {_e(r['round_id'])} · {_e(ans['scenario_id'])} "
@@ -179,8 +187,8 @@ def _round_card(r: dict) -> str:
         f"<b>대상</b> <code>{_e(ans['target_url'])}</code></p>",
     ]
 
-    if r["status"] != "scored":
-        title = "거부" if r["status"] == "rejected" else "무효"
+    if r["status"] != Status.SCORED:
+        title = "거부" if r["status"] == Status.REJECTED else "무효"
         out.append(f"<p class='warn'><b>{title}</b> {_e(r['invalid_reason'])}</p>")
         for err in (r["validation"] or {}).get("errors", []):
             out.append(f"<div class='warn'>· {_e(err)}</div>")
@@ -205,7 +213,9 @@ def _round_card(r: dict) -> str:
             out.append(f"<tr><td>-</td><td></td><td class='bad'>오탐</td><td>{_e(fp)}</td></tr>")
         out.append("</table></div>")
 
-        probes = {p["probe_id"]: p for p in r["diagnosis"]["trace"]}
+        # 창구 기록이 근거다. probes가 없는 옛 기록만 Diagnoser가 적은 trace를 쓴다.
+        source = r["probes"] if "probes" in r else r["diagnosis"]["trace"]
+        probes = {p["probe_id"]: p for p in source}
         cited = [
             pid for pid in dict.fromkeys(c["probe_id"] for c in s["evidence"]) if pid in probes
         ]
@@ -253,7 +263,9 @@ def _round_card(r: dict) -> str:
 def render_html(records: list[dict], rows: list[dict] | None = None) -> str:
     """라운드 기록 전체를 하나의 HTML 페이지로 만든다."""
     rows = summarize(records) if rows is None else rows
-    rejected = sum(r["status"] == "rejected" for r in records)
+    rejected = sum(r["status"] == Status.REJECTED for r in records)
+    failed = sum(r["status"] == Status.PROPOSAL_FAILED for r in records)
+    failure_note = f" · Breaker 제안 실패 {failed}개" if failed else ""
     table = [
         "<div class='wrap'><table><tr>"
         + "".join(f"<th>{_e(t)}</th>" for _, t in COLUMNS)
@@ -267,7 +279,7 @@ def render_html(records: list[dict], rows: list[dict] | None = None) -> str:
         f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>NetRunner 라운드 결과</title><style>{_CSS}</style></head><body>"
         f"<h1>NetRunner 라운드 결과</h1>"
-        f"<p class='muted'>측정 위치: 클라이언트 컨테이너 · 라운드 {len(records)}개 · "
-        f"검증에서 거부된 제안 {rejected}개</p>"
+        f"<p class='muted'>측정 위치: 클라이언트 컨테이너 · 라운드 {len(records) - failed}개 · "
+        f"검증에서 거부된 제안 {rejected}개{failure_note}</p>"
         f"{''.join(table)}{cards}</body></html>"
     )

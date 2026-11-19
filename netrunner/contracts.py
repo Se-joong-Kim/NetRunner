@@ -17,6 +17,16 @@ from urllib.parse import SplitResult, urlsplit
 from .faults import label_of
 
 
+class Status:
+    """라운드 기록의 status 값. 기록 형식의 일부라서 값을 바꾸면 기존 기록과 어긋난다."""
+
+    RUNNING = "running"  # 라운드 처리 중 초기값
+    SCORED = "scored"  # 주입, 재현, 진단, 채점까지 끝남
+    INVALID = "invalid"  # 실험망을 쓴 뒤 무효가 됨
+    REJECTED = "rejected"  # 검증에서 거부되어 실험망을 쓰지 않음
+    PROPOSAL_FAILED = "proposal_failed"  # Breaker가 유효한 제안을 내지 못해 매치를 끝냄
+
+
 class ContractError(ValueError):
     """합의된 형식을 어긴 입력."""
 
@@ -174,6 +184,37 @@ class Probe:
 
 
 @dataclass
+class ProbeResult:
+    """실험망이 검사 한 건을 실행한 결과(실험망 → 도구 창구).
+
+    ok는 실험망이 명령을 실행했는지다. 연결 거부처럼 네트워크가 실패한
+    결과도 ok=True이고 그 실패는 output에 담긴다. error에는 장애 정보를
+    넣지 않는다.
+    """
+
+    ok: bool
+    output: str = ""
+    elapsed_ms: int = 0
+    packets: int | None = None
+    file: str | None = None
+    error: str = ""
+
+
+@dataclass
+class ProbeView:
+    """도구 창구가 Diagnoser에게 돌려주는 검사 결과.
+
+    probe_id는 실행된 검사에만 붙고, 거부된 호출은 None과 error를 갖는다.
+    """
+
+    probe_id: str | None
+    output: str = ""
+    packets: int | None = None
+    file: str | None = None
+    error: str = ""
+
+
+@dataclass
 class Evidence:
     """진단이 든 근거 하나: 검사 참조와 그 검사가 보여 준다는 주장."""
 
@@ -220,7 +261,7 @@ class Diagnosis:
     """Diagnoser의 출력 한 건: 진단 목록, 검사 기록, 사용량."""
 
     round_id: str
-    # 예: "solar-pro2", "glm-4.5". 교체 전후 숫자가 섞이지 않게 남긴다.
+    # 예: "solar-pro2", "glm-5.3-flash". 교체 전후 숫자가 섞이지 않게 남긴다.
     model: str
     # 설계안 9.2절: "A" 규칙 | "B" 도구 없는 LLM | "C" 전체 | "C-1" | "C-2"
     method: str
