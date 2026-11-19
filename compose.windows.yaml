@@ -1,0 +1,8 @@
+# Windows Docker Desktop 전용 덮어쓰기 파일. `compose.yaml` 뒤에 붙여 쓴다.
+# internal 네트워크는 Docker Desktop에서 라우터 경유 통신을 막으므로 끈다(#47).
+# 외부 차단은 컨테이너 시작 때 기본 경로를 지우는 lab/start.sh에 맡긴다.
+networks:
+  client_net:
+    internal: false
+  server_net:
+    internal: false

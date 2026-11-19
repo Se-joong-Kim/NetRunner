@@ -34,6 +34,8 @@ docker compose up -d --no-build
 docker compose down
 ```
 
+Windows(Docker Desktop)에서는 `docker compose -f compose.yaml -f compose.windows.yaml up -d --no-build`로 띄운다. 덮어쓰기 파일은 internal 네트워크를 끈다(#47). `DockerLab`은 Windows에서 이 파일을 자동으로 붙인다. 네트워크 설정이 바뀌었으면 `docker compose down` 뒤에 띄운다.
+
 린터와 포매터는 ruff를 쓴다.
 
 ```

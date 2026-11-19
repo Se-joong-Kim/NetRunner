@@ -15,6 +15,16 @@ from .child_env import child_environment
 from .contracts import FaultSpec, LabResult, Scenario, read_json
 
 ROOT = Path(__file__).resolve().parent.parent
+COMPOSE_FILE = ROOT / "compose.yaml"
+# Windows Docker Desktop에서는 internal 네트워크가 라우터 경유 통신을 막는다(#47).
+# 덮어쓰기 파일은 그곳에서만 internal을 끈다. 외부 차단은 lab/start.sh의 기본 경로 삭제에 맡긴다.
+WINDOWS_OVERRIDE = ROOT / "compose.windows.yaml"
+IS_WINDOWS = os.name == "nt"
+
+
+def compose_files(windows: bool) -> list[Path]:
+    """실험망 compose 파일 목록. Windows에서는 덮어쓰기 파일을 뒤에 붙인다."""
+    return [COMPOSE_FILE, WINDOWS_OVERRIDE] if windows else [COMPOSE_FILE]
 
 
 class DockerLab:
@@ -26,7 +36,8 @@ class DockerLab:
         self.hosts = self.config["hosts"]
 
     def _run(self, service: str, *args: str, timeout: int = 20) -> dict:
-        cmd = ["docker", "compose", "-f", str(ROOT / "compose.yaml"), "exec", "-T", service, *args]
+        files = [arg for f in compose_files(IS_WINDOWS) for arg in ("-f", str(f))]
+        cmd = ["docker", "compose", *files, "exec", "-T", service, *args]
         start = time.monotonic()
         try:
             p = subprocess.run(

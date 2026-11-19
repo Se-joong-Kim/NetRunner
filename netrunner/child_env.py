@@ -42,7 +42,7 @@ PREFIXES = ("LC_", "XDG_")
 # 생성기를 초기화하지 못해 시작하자마자 종료한다(#40). USERPROFILE과 APPDATA는
 # 실제 GLM 호출로 필요한지 확인한 뒤 넣는다.
 WINDOWS_NAMES = frozenset(
-    {"SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "SYSTEMDRIVE", "TEMP", "TMP"}
+    {"SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "SYSTEMDRIVE", "PROGRAMFILES", "TEMP", "TMP"}
 )
 IS_WINDOWS = os.name == "nt"
 # 접두사로 허용해도 이름에 이 표지가 있으면 넘기지 않는다(예: LC_TOKEN).
