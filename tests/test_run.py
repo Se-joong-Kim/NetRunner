@@ -47,7 +47,7 @@ def test_docker_impl_builds_docker_lab_from_lab_config():
 
 @pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
 def test_real_lab_reproduces_and_resets_every_round(tmp_path):
-    # 11주차 완료 기준: D2·T2를 반복해도 매번 재현되고 정상화된다.
+    # 완료 기준: D2·T2를 반복해도 매번 재현되고 정상화된다.
     assert main(["run", "--impl", "docker", "--repeat", "3", "--out", str(tmp_path)]) == 0
     recs = records_in(tmp_path)
     assert len(recs) == 6

@@ -82,7 +82,7 @@ def summarize(records: list[dict]) -> list[dict]:
                 "time_med_s": round(statistics.median(times), 2) if times else "-",
                 "time_p95_s": round(p95(times), 2) if times else "-",
                 "fooled": ratio(fooled, len(sc)),
-                # 실험망을 쓴 라운드 중 주입 뒤 증상까지 확인된 비율(11주차 완료 기준)
+                # 실험망을 쓴 라운드 중 주입 뒤 증상까지 확인된 비율
                 "repro": ratio(sum(_reproduced(r) for r in rs), len(rs)),
                 "reset_ok": ratio(
                     sum(r["reset_verified"] is True for r in rs),
