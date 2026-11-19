@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import subprocess
 
-from netrunner import docker_lab
+from netrunner import child_env, docker_lab
 from netrunner.child_env import child_environment, is_allowed
+
+WINDOWS_SAMPLE = {
+    "SYSTEMROOT": r"C:\Windows",
+    "COMSPEC": r"C:\Windows\system32\cmd.exe",
+    "USERPROFILE": r"C:\Users\x",
+}
 
 SAMPLE = {
     "PATH": "/usr/bin",
@@ -48,6 +54,14 @@ def test_unlisted_names_are_dropped():
 
 def test_extra_values_are_added_without_name_check():
     assert child_environment({}, {"OPENCODE_CONFIG": "/p"}) == {"OPENCODE_CONFIG": "/p"}
+
+
+def test_windows_system_names_pass_only_on_windows(monkeypatch):
+    monkeypatch.setattr(child_env, "IS_WINDOWS", False)
+    assert child_environment(WINDOWS_SAMPLE) == {}
+    monkeypatch.setattr(child_env, "IS_WINDOWS", True)
+    # USERPROFILE은 아직 넣지 않는다(실제 GLM 호출로 필요성을 확인한 뒤 추가).
+    assert set(child_environment(WINDOWS_SAMPLE)) == {"SYSTEMROOT", "COMSPEC"}
 
 
 def test_docker_commands_get_only_the_allowed_environment(monkeypatch):
