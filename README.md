@@ -12,10 +12,10 @@ Breaker(장애를 심는 LLM 에이전트)와 Diagnoser(증상만 듣고 원인�
 | 양시찬 | 실험망 | `netrunner/lab.py`, `docker_lab.py`, `config/lab.json`, `lab/`, `compose.yaml`, `tests/test_docker_lab.py`, `docs/plan-Yang.md`, `docs/work-summary-Yang.md` |
 | 이현섭 | Diagnoser | `netrunner/diagnoser.py`, `http_lab.py`, `http_demo.py`, `labs/http/`, `config/http_lab.json`, `fixtures/http/`, `docs/http-lab.md`, `tests/test_http_diagnoser.py`, `test_http_lab.py` |
 | 김세중 | 심판과 통합 | `netrunner/referee.py`, `validate.py`, `scoring.py`, `report.py`, `toolbox.py`, `__main__.py`, `__init__.py`, `fixtures/first_integration/`, `fixtures/scoring_examples/`, `docs/superpowers/`, `tests/test_judge.py`, `test_run.py`, `test_toolbox.py`, `test_tools.py` |
-| 계약 | 바꾸면 영향을 받는 담당자 모두 승인 | `docs/interfaces.md`, `netrunner/contracts.py`, `faults.py`, `tools.py` |
-| 공용 | 바꾸면 팀원 한 명 이상 승인 | `CLAUDE.md`, `README.md`, `pyproject.toml`, `uv.lock`, `.github/`, `.gitignore`, `.gitattributes`, `docs/planning/` |
+| 계약 | 모듈 사이 데이터 형식 | `docs/interfaces.md`, `netrunner/contracts.py`, `faults.py`, `tools.py` |
+| 공용 | 팀 공용 파일 | `CLAUDE.md`, `README.md`, `pyproject.toml`, `uv.lock`, `.github/`, `.gitignore`, `.gitattributes`, `docs/planning/` |
 
-`main`에는 PR로만 합친다. 자기 담당 파일만 바꾼 PR은 CI(초록 체크)가 통과하면 올린 사람이 바로 합치고, 다른 담당자의 파일·계약·공용 파일을 바꾼 PR은 위 표의 승인을 받은 뒤 합친다. 자세한 규칙은 [CLAUDE.md의 GitHub 협업](CLAUDE.md#github-협업)에 있다.
+`main`에는 PR로만 합친다. CI(초록 체크)가 통과하면 PR을 연 사람이 합친다. 승인은 받지 않는다. 자세한 규칙은 [CLAUDE.md의 GitHub 협업](CLAUDE.md#github-협업)에 있다.
 
 모듈 사이 데이터 형식과 장애 목록: [docs/interfaces.md](docs/interfaces.md)
 
