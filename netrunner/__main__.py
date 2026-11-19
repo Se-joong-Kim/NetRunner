@@ -22,6 +22,7 @@ from .diagnoser import ReplayDiagnoser
 from .docker_lab import DockerLab
 from .glm_client import DEFAULT_MODEL, OpencodeComplete
 from .lab import Lab, MockLab, ReplayRunner
+from .records import default_runs_dir, ensure_private_dir, open_private, write_private_text
 from .referee import Referee, feedback_for
 from .report import format_table, load_records, render_html, summarize
 from .validate import LabInfo, validate
@@ -98,7 +99,7 @@ def cmd_run(args) -> int:
     if not scenario_files or args.repeat < 1:
         print(f"{d}에 *.scenario.json이 없거나 반복 횟수가 1보다 작음", file=sys.stderr)
         return 1
-    out = Path(args.out)
+    out = ensure_private_dir(args.out)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     records_path = out / f"rounds-{d.name}-{args.impl}-{stamp}.jsonl"
     lab = make_lab(args.impl, args.lab)
@@ -120,7 +121,7 @@ def cmd_run(args) -> int:
     rows = summarize(records)
     print(format_table(rows))
     html_path = records_path.with_name(records_path.stem.replace("rounds-", "report-") + ".html")
-    html_path.write_text(render_html(records, rows), encoding="utf-8")
+    write_private_text(html_path, render_html(records, rows))
     print(f"\n기록: {records_path}\n결과 화면: {html_path}")
     return 1 if stopped else 0
 
@@ -131,7 +132,7 @@ def cmd_report(args) -> int:
     rows = summarize(records)
     print(format_table(rows))
     if args.html:
-        Path(args.html).write_text(render_html(records, rows), encoding="utf-8")
+        write_private_text(args.html, render_html(records, rows))
         print(f"\n결과 화면: {args.html}")
     return 0
 
@@ -153,8 +154,7 @@ def cmd_lab_check(args) -> int:
                 file=sys.stderr,
             )
             return 1
-    output = Path(args.out)
-    output.mkdir(parents=True, exist_ok=True)
+    output = ensure_private_dir(args.out)
     path = output / f"lab-check-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.jsonl"
     for _ in range(args.repeat):
         for scenario in scenarios:
@@ -176,7 +176,7 @@ def cmd_lab_check(args) -> int:
             finally:
                 steps["reset"] = asdict(lab.reset())
                 steps["health_check_after"] = asdict(lab.health_check(scenario.target_url))
-                with path.open("a", encoding="utf-8") as fp:
+                with open_private(path) as fp:
                     fp.write(
                         json.dumps(
                             {"scenario_id": scenario.scenario_id, "steps": steps},
@@ -251,8 +251,7 @@ def cmd_breaker_propose(args) -> int:
     history = []
     if args.history:
         history = [fb for rec in load_records(args.history) if (fb := feedback_for(rec))]
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
+    out = ensure_private_dir(args.out)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     journal = out / f"breaker-{stamp}.jsonl"
     complete = OpencodeComplete(
@@ -272,9 +271,7 @@ def cmd_breaker_propose(args) -> int:
         accepted.append(sc)
         history.append(_as_valid_round(sc))
         path = out / f"{stem}-{len(accepted):02d}.scenario.json"
-        path.write_text(
-            json.dumps(asdict(sc), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        write_private_text(path, json.dumps(asdict(sc), ensure_ascii=False, indent=2) + "\n")
     distinct = len({signature(sc.faults, sc.domain) for sc in accepted})
     print(format_proposal_summary(breaker.stats, args.n, len(accepted), distinct))
     print(f"\n호출 기록: {journal}")
@@ -287,8 +284,9 @@ def cmd_breaker_propose(args) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    """명령줄 인자를 해석해 하위 명령을 실행한다."""
+def build_parser() -> argparse.ArgumentParser:
+    """명령줄 해석기를 만든다. 기록 폴더 기본값은 저장소 밖이다(#21)."""
+    runs = str(default_runs_dir())
     ap = argparse.ArgumentParser(prog="netrunner", description="NetRunner 심판·통합 도구")
     ap.add_argument("--lab", default=str(DEFAULT_LAB), help="실험망 주소 정보 JSON")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -299,24 +297,24 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("demo", help="고정 입력으로 라운드를 모의 실행(run --impl mock과 같음)")
     p.add_argument("--dir", default=str(ROOT / "fixtures" / "first_integration"))
-    p.add_argument("--out", default=str(ROOT / "runs"))
+    p.add_argument("--out", default=runs, help="기록 폴더(기본: ~/netrunner-private/runs)")
     p.set_defaults(func=cmd_run, impl="mock", repeat=1)
 
     p = sub.add_parser("run", help="고정 세트를 고른 실험망에서 심판으로 반복 실행")
     p.add_argument("--impl", choices=sorted(LAB_IMPLS), default="docker", help="실험망 구현")
     p.add_argument("--dir", default=str(ROOT / "fixtures" / "first_integration"))
-    p.add_argument("--out", default=str(ROOT / "runs"))
+    p.add_argument("--out", default=runs, help="기록 폴더(기본: ~/netrunner-private/runs)")
     p.add_argument("--repeat", type=int, default=1)
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("report", help="라운드 기록으로 지표와 결과 화면 생성")
     p.add_argument("records")
-    p.add_argument("--html")
+    p.add_argument("--html", help="결과 화면 파일(정답이 들어 있으니 저장소 밖에 둔다)")
     p.set_defaults(func=cmd_report)
 
     p = sub.add_parser("lab-check", help="실제 실험망의 장애 재현과 복구 확인")
     p.add_argument("--dir", default=str(ROOT / "fixtures" / "first_integration"))
-    p.add_argument("--out", default=str(ROOT / "runs"))
+    p.add_argument("--out", default=runs, help="기록 폴더(기본: ~/netrunner-private/runs)")
     p.add_argument("--repeat", type=int, default=1)
     p.set_defaults(func=cmd_lab_check)
 
@@ -333,10 +331,18 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("NETRUNNER_OPENCODE", "opencode"),
         help="opencode 실행 파일 경로(기본: NETRUNNER_OPENCODE 또는 PATH의 opencode)",
     )
-    p.add_argument("--out", default=str(ROOT / "runs"), help="호출 기록과 채택 시나리오 폴더")
+    p.add_argument(
+        "--out",
+        default=runs,
+        help="호출 기록과 채택 시나리오 폴더(기본: ~/netrunner-private/runs)",
+    )
     p.set_defaults(func=cmd_breaker_propose)
+    return ap
 
-    args = ap.parse_args(argv)
+
+def main(argv: list[str] | None = None) -> int:
+    """명령줄 인자를 해석해 하위 명령을 실행한다."""
+    args = build_parser().parse_args(argv)
     return args.func(args)
 
 
