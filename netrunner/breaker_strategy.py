@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from .contracts import BreakerFeedback, FaultSpec, Scenario
-from .faults import FAULTS, Fault, Param
+from .faults import FAULTS, Fault, Param, lookup_fault
 from .validate import MAX_FAULTS, LabInfo
 
 # 진단이 틀린 판정. masked는 가려져서 판단한 적이 없으므로 시도로도 세지 않는다.
@@ -67,16 +67,43 @@ def _ip_names(spec: Fault) -> list[str]:
     return [n for n, p in spec.params.items() if p.kind == "ip"]
 
 
-def refused_by_lab(fault: FaultSpec, lab: LabInfo) -> bool:
-    """IP 매개변수가 실험망이 주입하지 않는 주소(호스트 또는 정상 서버)인지 본다."""
+def lab_refused_addresses(lab: LabInfo) -> frozenset[str]:
+    """실험망이 주입하지 않는 주소: 실험망 호스트와 정상 서버 주소.
+
+    docker_lab.inject가 같은 목록으로 D2 주입을 거부한다.
+    """
+    return frozenset(lab.hosts.values()) | {lab.web_ip}
+
+
+def refused_values(fault: FaultSpec, lab: LabInfo) -> list[str]:
+    """장애의 IP 매개변수 중 실험망이 주입하지 않는 값 목록."""
     spec = FAULTS.get(fault.id)
     if spec is None:
-        return False
-    refused = set(lab.hosts.values()) | {lab.web_ip}
-    return any(
-        isinstance(fault.params.get(n), str) and fault.params[n] in refused
+        return []
+    refused = lab_refused_addresses(lab)
+    return [
+        fault.params[n]
         for n in _ip_names(spec)
-    )
+        if isinstance(fault.params.get(n), str) and fault.params[n] in refused
+    ]
+
+
+def refused_by_lab(fault: FaultSpec, lab: LabInfo) -> bool:
+    """IP 매개변수가 실험망이 주입하지 않는 주소인지 본다."""
+    return bool(refused_values(fault, lab))
+
+
+def canonical_label(label: str) -> str | None:
+    """'단계 / 원인' 오탐 라벨을 장애 카탈로그의 정답 라벨로 바꾼다. 모르면 None.
+
+    채점기는 오탐을 진단이 쓴 원문 라벨로 남긴다. 별칭이나 다른 표기도 카탈로그의
+    장애를 찾아 같은 정답 라벨로 모아야 힌트가 흩어지지 않는다.
+    """
+    stage, sep, cause = label.partition(" / ")
+    if not sep:
+        return None
+    fault = lookup_fault(stage, cause)
+    return fault.label if fault else None
 
 
 def unit_of(fault: FaultSpec, lab: LabInfo) -> str:
@@ -139,7 +166,6 @@ def plan(
     """
     valid = [fb for fb in history if fb.valid]
     target = Scenario(scenario_id="", target_url=target_url, faults=[], complaint="")
-    known = {f.label for f in faults.values()}
     attempts: Counter[str] = Counter()
     wrong: Counter[str] = Counter()
     false_pos: Counter[str] = Counter()
@@ -152,7 +178,11 @@ def plan(
             attempts[unit] += 1
             if o.verdict in WRONG_VERDICTS:
                 wrong[unit] += 1
-        false_pos.update(x for x in fb.false_positives if isinstance(x, str) and x in known)
+        false_pos.update(
+            label
+            for x in fb.false_positives
+            if isinstance(x, str) and (label := canonical_label(x))
+        )
     exhausted = exhausted_faults(valid, target, max_faults, faults)
     open_units = [u for u in units(lab, faults) if u.split("/")[0] not in exhausted]
     ranked = sorted(

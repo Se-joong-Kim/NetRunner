@@ -11,7 +11,7 @@ import json
 import unicodedata
 from collections.abc import Collection, Mapping, Sequence
 
-from .breaker_strategy import Hints
+from .breaker_strategy import Hints, lab_refused_addresses
 from .contracts import BreakerFeedback, Scenario
 from .faults import FAULTS, Fault, Param
 from .validate import CLUE_WORDS, CONFLICT_GROUPS, MAX_COMPLAINT_LEN, MAX_FAULTS, LabInfo
@@ -64,7 +64,7 @@ def _param_how(name: str, p: Param, target: Scenario, lab: LabInfo) -> str:
             return f"대상 도메인 {target.domain}"
         return f"실험망 도메인({', '.join(lab.domains)}) 중 대상과 다른 것"
     if p.kind == "ip":
-        return f"실험망 대역 {lab.subnet} 안의 IP, 호스트 주소와 정상 서버 {lab.web_ip} 제외"
+        return f"실험망 대역 {lab.subnet} 안의 IP, 아래 주입할 수 없는 주소 제외"
     if p.kind == "port":
         return f"정수, 대상 포트 {target.port}로 고정"
     return f"정수 {p.min}~{p.max}"
@@ -149,8 +149,8 @@ def build_prompt(
             f"- 대상 URL: {target_url} (도메인 {target.domain}, 포트 {target.port})",
             f"- 증상 문장은 {MAX_COMPLAINT_LEN}자 이내. 다음 단어를 쓰지 않는다: "
             + ", ".join(CLUE_WORDS),
-            f"- 정상 서버 IP({lab.web_ip})와 같은 IP는 장애가 아니다.",
-            "- 실험망 호스트 주소(dns, router 등)는 주입되지 않으므로 ip로 쓰지 않는다.",
+            "- 주입할 수 없는 주소(실험망 호스트와 정상 서버)는 ip로 쓰지 않는다: "
+            + ", ".join(sorted(lab_refused_addresses(lab))),
             "- 진단이 틀렸던 장애(cause_wrong, stage_wrong, missed)를 다시 시험해 볼 만하다.",
             "  같은 장애 조합과 매개변수는 반복하지 않는다.",
             "",

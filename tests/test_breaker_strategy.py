@@ -10,11 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from netrunner.breaker import LLMBreaker
+from netrunner.breaker import CompletionError, LLMBreaker
 from netrunner.breaker_strategy import (
     exhausted_faults,
     plan,
     refused_by_lab,
+    refused_values,
     unit_of,
     units,
 )
@@ -184,7 +185,10 @@ def test_prompt_shows_strategy_after_an_exhausting_round():
 def test_prompt_forbids_host_addresses_as_fault_ips():
     complete = fake_model(GOOD_D2)
     LLMBreaker(complete, LAB, TARGET).propose([])
-    assert "실험망 호스트 주소(dns, router 등)는 주입되지 않으므로" in complete.prompts[0]
+    prompt = complete.prompts[0]
+    assert "주입할 수 없는 주소(실험망 호스트와 정상 서버)는 ip로 쓰지 않는다" in prompt
+    assert "10.20.0.54" in prompt  # alt_dns 호스트 주소가 목록에 적혀 있다
+    assert "10.20.0.10" in prompt  # 정상 서버 주소도 적혀 있다
 
 
 def test_host_address_proposal_is_refused_and_the_reason_goes_back_to_the_model():
@@ -202,4 +206,48 @@ def test_host_address_proposal_is_refused_and_the_reason_goes_back_to_the_model(
     sc = breaker.propose([])
     assert sc.faults[0].params["ip"] == "10.20.0.99"
     assert breaker.stats.lab_refused == 1
-    assert "실험망이 주입하지 않는 주소" in complete.prompts[1]
+    assert "실험망이 주입하지 않는 주소를 씀: 10.20.0.54" in complete.prompts[1]
+
+
+def test_api_error_keeps_the_last_rejection_reason_for_the_next_attempt():
+    outputs = iter(
+        [
+            json.dumps(
+                {
+                    "faults": [{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.54"}}],
+                    "complaint": "사이트가 열리지 않아요.",
+                },
+                ensure_ascii=False,
+            ),
+            CompletionError("연결 실패"),
+            GOOD_D2,
+        ]
+    )
+    prompts: list[str] = []
+
+    def complete(prompt: str) -> str:
+        prompts.append(prompt)
+        item = next(outputs)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    LLMBreaker(complete, LAB, TARGET).propose([])
+    assert "실험망이 주입하지 않는 주소를 씀: 10.20.0.54" in prompts[2]
+
+
+def test_alias_false_positive_is_counted_under_its_catalog_label():
+    history = [
+        fb(
+            [T2],
+            [("T2", T2_LABEL, "cause_wrong")],
+            false_positives=["DNS / wrong ip", "DNS / 잘못된 주소", "모르는 단계 / 무엇"],
+        )
+    ]
+    hints = plan(history, LAB, TARGET)
+    assert hints.over_predicted == ("DNS / 잘못된 주소",)
+
+
+def test_refused_values_names_the_address_the_lab_cannot_inject():
+    assert refused_values(D2_HOST, LAB) == ["10.20.0.54"]
+    assert refused_values(D2_EMPTY, LAB) == []

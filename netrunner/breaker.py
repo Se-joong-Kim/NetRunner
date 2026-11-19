@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .breaker_prompt import build_prompt, with_rejection
-from .breaker_strategy import plan, refused_by_lab, signature
+from .breaker_strategy import plan, refused_values, signature
 from .contracts import BreakerFeedback, Scenario
 from .validate import MAX_FAULTS, LabInfo, validate
 
@@ -66,7 +66,7 @@ class ProposalStats:
     invalid: int = 0  # 심판 검증 규칙에 걸림
     masked: int = 0  # 앞 단계 장애에 가려 클라이언트에서 볼 수 없음
     over_limit: int = 0  # 실험망이 동시에 켤 수 있는 장애 수를 넘음
-    lab_refused: int = 0  # 실험망이 주입하지 않는 주소(호스트, 정상 서버 IP)를 씀
+    lab_refused: int = 0  # 실험망 호스트나 정상 서버 주소를 IP로 씀(주입되지 않음)
     accepted: int = 0
 
     @property
@@ -151,9 +151,9 @@ class LLMBreaker:
             try:
                 text = self._complete(sent)
             except CompletionError as e:
+                # 호출 실패에는 새 사유를 붙이지 않는다. 앞선 거부 사유는 남겨 둔다.
                 self.stats.calls += 1
                 self.stats.api_errors += 1
-                reason = ""
                 last_error = str(e)
                 self._journal(attempt, sent, None, f"API 오류: {e}")
                 continue
@@ -198,8 +198,8 @@ class LLMBreaker:
                     "origin": "breaker",
                 }
             )
-            if not all(isinstance(f.id, str) and isinstance(f.params, dict) for f in sc.faults):
-                raise ValueError("장애 ID는 문자열, params는 객체여야 함")
+            if not all(isinstance(f.id, str) for f in sc.faults):
+                raise ValueError("장애 ID는 문자열이어야 함")
             key = signature(sc.faults, sc.domain)
         except (ValueError, TypeError) as e:
             self.stats.unparsable += 1
@@ -211,9 +211,10 @@ class LLMBreaker:
         if not v.ok:
             self.stats.invalid += 1
             return None, "; ".join(v.errors)
-        if any(refused_by_lab(f, self._lab) for f in sc.faults):
+        refused = sorted({v for f in sc.faults for v in refused_values(f, self._lab)})
+        if refused:
             self.stats.lab_refused += 1
-            return None, "실험망이 주입하지 않는 주소(실험망 호스트 또는 정상 서버 IP)를 씀"
+            return None, f"실험망이 주입하지 않는 주소를 씀: {', '.join(refused)}"
         if len(sc.faults) > self._max_faults:
             self.stats.over_limit += 1
             return None, f"동시 장애 {len(sc.faults)}개, 실험망 한도 {self._max_faults}개"

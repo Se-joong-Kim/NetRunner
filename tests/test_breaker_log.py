@@ -65,3 +65,14 @@ def test_call_journal_appends_one_utf8_json_line_per_record(tmp_path):
     lines = path.read_text(encoding="utf-8").splitlines()
     assert [json.loads(line)["verdict"] for line in lines] == ["채택", "형식 오류"]
     assert "한글 원문" in lines[1]
+
+
+def test_line_break_characters_in_text_do_not_split_a_record(tmp_path):
+    path = tmp_path / "breaker-test.jsonl"
+    journal = CallJournal(path)
+    raw = "앞 가운데 뒤\x85끝"
+    journal({"raw": raw})
+    journal({"raw": "둘째"})
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["raw"] == raw

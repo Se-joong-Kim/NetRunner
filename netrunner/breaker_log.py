@@ -9,6 +9,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+# 한국어를 그대로 쓰되, str.splitlines()가 줄로 나누는 문자는 JSON 이스케이프로 바꾼다.
+# JSON 문자열 안에서는 이 이스케이프가 같은 값을 뜻하므로 기록 내용은 바뀌지 않는다.
+_LINE_BREAKS = {" ": "\\u2028", " ": "\\u2029", "\x85": "\\u0085"}
+
 
 class CallJournal:
     """기록 한 건을 한 줄 JSON으로 파일 끝에 덧붙인다."""
@@ -18,6 +22,9 @@ class CallJournal:
 
     def __call__(self, record: dict) -> None:
         """기록 한 건을 덧붙인다. 상위 폴더가 없으면 만든다."""
+        line = json.dumps(record, ensure_ascii=False)
+        for char, escaped in _LINE_BREAKS.items():
+            line = line.replace(char, escaped)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.open("a", encoding="utf-8") as fp:
-            fp.write(json.dumps(record, ensure_ascii=False) + "\n")
+            fp.write(line + "\n")
