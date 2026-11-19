@@ -10,6 +10,7 @@ from netrunner.child_env import child_environment, is_allowed
 WINDOWS_SAMPLE = {
     "SYSTEMROOT": r"C:\Windows",
     "COMSPEC": r"C:\Windows\system32\cmd.exe",
+    "PROGRAMFILES": r"C:\Program Files",
     "USERPROFILE": r"C:\Users\x",
 }
 
@@ -61,7 +62,7 @@ def test_windows_system_names_pass_only_on_windows(monkeypatch):
     assert child_environment(WINDOWS_SAMPLE) == {}
     monkeypatch.setattr(child_env, "IS_WINDOWS", True)
     # USERPROFILE은 아직 넣지 않는다(실제 GLM 호출로 필요성을 확인한 뒤 추가).
-    assert set(child_environment(WINDOWS_SAMPLE)) == {"SYSTEMROOT", "COMSPEC"}
+    assert set(child_environment(WINDOWS_SAMPLE)) == {"SYSTEMROOT", "COMSPEC", "PROGRAMFILES"}
 
 
 def test_docker_commands_get_only_the_allowed_environment(monkeypatch):

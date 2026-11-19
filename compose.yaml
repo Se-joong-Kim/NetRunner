@@ -1,5 +1,6 @@
 # 모든 실험망 컨테이너는 capability를 전부 내리고(cap_drop), 필요한 것만 다시 준다.
 # 권한 상승은 막는다(no-new-privileges). 실험망 네트워크는 internal이라 외부로 나가지 못한다.
+# 단, Windows Docker Desktop에서는 compose.windows.yaml이 internal을 끈다(#47).
 x-hardened: &hardened
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
