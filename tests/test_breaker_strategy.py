@@ -14,9 +14,8 @@ from netrunner.breaker import BreakerError, CompletionError, LLMBreaker
 from netrunner.breaker_log import CallJournal
 from netrunner.breaker_strategy import (
     exhausted_faults,
+    host_addresses,
     plan,
-    refused_by_lab,
-    refused_values,
     unit_of,
     units,
 )
@@ -31,7 +30,6 @@ D2_LABEL = FAULTS["D2"].label
 T2_LABEL = FAULTS["T2"].label
 D2_EMPTY = FaultSpec("D2", {"domain": "shop.lab", "ip": "10.20.0.99"})
 D2_HOST = FaultSpec("D2", {"domain": "shop.lab", "ip": "10.20.0.54"})
-D2_WEB = FaultSpec("D2", {"domain": "shop.lab", "ip": "10.20.0.10"})
 T2 = FaultSpec("T2", {"port": 80})
 GOOD_D2 = json.dumps(
     {
@@ -72,29 +70,25 @@ def fake_model(*outputs):
     return complete
 
 
-def test_units_are_enabled_faults_and_only_the_empty_address_class():
-    assert units(LAB) == ["D2/ip=empty", "T2"]
+def test_units_are_enabled_faults_with_the_empty_and_host_address_classes():
+    assert units(LAB) == ["D2/ip=empty", "D2/ip=host", "T2"]
 
 
-@pytest.mark.parametrize(
-    ("fault", "refused"),
-    [(D2_EMPTY, False), (D2_HOST, True), (D2_WEB, True), (T2, False)],
-)
-def test_lab_refuses_host_and_web_addresses(fault, refused):
-    assert refused_by_lab(fault, LAB) is refused
+def test_host_addresses_are_the_lab_hosts_in_the_subnet_minus_the_web_server():
+    assert host_addresses(LAB) == frozenset({"10.20.0.53", "10.20.0.54", "10.20.0.254"})
 
 
-def test_host_address_belongs_to_its_own_class_outside_the_units():
+def test_host_address_belongs_to_its_own_class_and_is_a_unit():
     assert unit_of(D2_HOST, LAB) == "D2/ip=host"
     assert unit_of(D2_EMPTY, LAB) == "D2/ip=empty"
     assert unit_of(T2, LAB) == "T2"
-    assert "D2/ip=host" not in units(LAB)
+    assert "D2/ip=host" in units(LAB)
 
 
 def test_no_history_gives_every_unit_the_neutral_rate_and_all_untried():
     hints = plan([], LAB, TARGET)
-    assert hints.ranked == (("D2/ip=empty", 0.5), ("T2", 0.5))
-    assert hints.untried == ("D2/ip=empty", "T2")
+    assert hints.ranked == (("D2/ip=empty", 0.5), ("D2/ip=host", 0.5), ("T2", 0.5))
+    assert hints.untried == ("D2/ip=empty", "D2/ip=host", "T2")
     assert hints.exhausted == ()
     assert hints.over_predicted == ()
 
@@ -104,14 +98,22 @@ def test_one_wrong_attempt_moves_the_smoothed_rate_to_two_thirds():
     hints = plan(history, LAB, TARGET)
     assert rate(hints, "D2/ip=empty") == pytest.approx(2 / 3)
     assert hints.ranked[0][0] == "D2/ip=empty"
-    assert hints.untried == ("T2",)
+    assert hints.untried == ("D2/ip=host", "T2")
+
+
+def test_host_address_attempt_is_counted_under_the_host_class():
+    history = [fb([D2_HOST], [("D2", D2_LABEL, "cause_wrong")])]
+    hints = plan(history, LAB, TARGET)
+    assert rate(hints, "D2/ip=host") == pytest.approx(2 / 3)
+    assert rate(hints, "D2/ip=empty") == pytest.approx(0.5)
+    assert "D2/ip=empty" in hints.untried
 
 
 def test_correct_verdict_is_an_attempt_but_not_a_wrong_one():
     history = [fb([D2_EMPTY], [("D2", D2_LABEL, "correct")])]
     hints = plan(history, LAB, TARGET)
     assert rate(hints, "D2/ip=empty") == pytest.approx(1 / 3)
-    assert hints.untried == ("T2",)
+    assert hints.untried == ("D2/ip=host", "T2")
 
 
 def test_masked_verdict_is_not_counted_as_an_attempt():
@@ -145,7 +147,7 @@ def test_fixed_fault_is_exhausted_after_a_valid_round_with_one_fault_limit():
     history = [fb([T2], [("T2", T2_LABEL, "cause_wrong")])]
     hints = plan(history, LAB, TARGET, max_faults=1)
     assert hints.exhausted == ("T2",)
-    assert [unit for unit, _ in hints.ranked] == ["D2/ip=empty"]
+    assert [unit for unit, _ in hints.ranked] == ["D2/ip=empty", "D2/ip=host"]
 
 
 def test_fixed_fault_is_not_exhausted_when_faults_can_be_combined():
@@ -184,20 +186,36 @@ def test_prompt_shows_strategy_after_an_exhausting_round():
     assert "- T2:" not in prompt  # 고갈된 장애는 장애 목록에서 빠진다
 
 
-def test_prompt_forbids_host_addresses_as_fault_ips():
+def test_prompt_refuses_the_web_server_and_offers_host_addresses_as_a_class():
     complete = fake_model(GOOD_D2)
     LLMBreaker(complete, LAB, TARGET).propose([])
     prompt = complete.prompts[0]
-    assert "주입할 수 없는 주소(실험망 호스트와 정상 서버)는 ip로 쓰지 않는다" in prompt
+    assert "정상 서버 주소(10.20.0.10)는 ip로 쓰지 않는다" in prompt
     assert "10.20.0.54" in prompt  # alt_dns 호스트 주소가 목록에 적혀 있다
-    assert "10.20.0.10" in prompt  # 정상 서버 주소도 적혀 있다
+    assert "아직 안 낸 단위: D2 (빈 주소), D2 (실험망 호스트 주소), T2" in prompt
 
 
-def test_host_address_proposal_is_refused_and_the_reason_goes_back_to_the_model():
+def test_host_address_proposal_is_accepted():
     complete = fake_model(
         json.dumps(
             {
                 "faults": [{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.54"}}],
+                "complaint": "사이트가 열리지 않아요.",
+            },
+            ensure_ascii=False,
+        )
+    )
+    breaker = LLMBreaker(complete, LAB, TARGET)
+    sc = breaker.propose([])
+    assert sc.faults[0].params["ip"] == "10.20.0.54"
+    assert breaker.stats.accepted == 1
+
+
+def test_web_server_address_proposal_is_refused_and_the_reason_goes_back_to_the_model():
+    complete = fake_model(
+        json.dumps(
+            {
+                "faults": [{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.10"}}],
                 "complaint": "사이트가 열리지 않아요.",
             },
             ensure_ascii=False,
@@ -207,8 +225,8 @@ def test_host_address_proposal_is_refused_and_the_reason_goes_back_to_the_model(
     breaker = LLMBreaker(complete, LAB, TARGET)
     sc = breaker.propose([])
     assert sc.faults[0].params["ip"] == "10.20.0.99"
-    assert breaker.stats.lab_refused == 1
-    assert "실험망이 주입하지 않는 주소를 씀: 10.20.0.54" in complete.prompts[1]
+    assert breaker.stats.invalid == 1
+    assert "정상 서버 IP와 같아 장애가 아님" in complete.prompts[1]
 
 
 def test_params_given_as_a_list_are_rejected_not_silently_converted():
@@ -243,7 +261,7 @@ def test_api_error_keeps_the_last_rejection_reason_for_the_next_attempt():
         [
             json.dumps(
                 {
-                    "faults": [{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.54"}}],
+                    "faults": [{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.10"}}],
                     "complaint": "사이트가 열리지 않아요.",
                 },
                 ensure_ascii=False,
@@ -262,7 +280,7 @@ def test_api_error_keeps_the_last_rejection_reason_for_the_next_attempt():
         return item
 
     LLMBreaker(complete, LAB, TARGET).propose([])
-    assert "실험망이 주입하지 않는 주소를 씀: 10.20.0.54" in prompts[2]
+    assert "정상 서버 IP와 같아 장애가 아님" in prompts[2]
 
 
 def test_alias_false_positive_is_counted_under_its_catalog_label():
@@ -275,8 +293,3 @@ def test_alias_false_positive_is_counted_under_its_catalog_label():
     ]
     hints = plan(history, LAB, TARGET)
     assert hints.over_predicted == ("DNS / 잘못된 주소",)
-
-
-def test_refused_values_names_the_address_the_lab_cannot_inject():
-    assert refused_values(D2_HOST, LAB) == ["10.20.0.54"]
-    assert refused_values(D2_EMPTY, LAB) == []
