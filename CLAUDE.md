@@ -88,6 +88,8 @@ opencode는 GLM 호출(Breaker)과 개발 에이전트에 쓴다. 권한은 기�
 - 토큰이나 키를 검색하지 않는다. 환경변수는 이름 목록만 보고 값은 보지 않는다.
 - 세션 데이터베이스와 `runs/`에는 정답 시나리오(장애, `note`)가 평문으로 남는다. 보존 기간과 정리 방법은 아직 정하지 않았다. 정할 때까지 이 경로를 공유하거나 커밋하지 않는다.
 - 실험망 컨테이너는 `privileged`, `network_mode: host`, 장치 마운트, Docker 소켓 마운트를 쓰지 않는다. `NET_ADMIN`과 `NET_RAW`는 필요한 컨테이너에만 준다. 쓰지 않을 때는 `docker compose down`으로 내린다.
+- 이 계정은 `docker` 그룹이라 Docker 데몬 접근이 root 권한과 같다. 모델 에이전트(opencode)가 도는 경로에서는 Docker를 부르지 않는다. 실험망 코드는 사람이 실행한 명령에서만 Docker를 부른다.
+- `--opencode`와 `NETRUNNER_OPENCODE`로 고르는 실행 파일 경로는 신뢰하는 것만 쓴다. PATH에서 찾은 실행 파일도 같은 기준이다.
 - `@opencode/cli`는 로컬 설치(`.venv-opencode/`, git 제외)에 있고 그 안의 `package-lock.json`으로 버전을 잠근다. 저장소에는 잠금 파일이 없으므로 팀원은 같은 버전을 직접 맞춘다. 버전을 올릴 때는 `npm audit signatures`로 서명을 확인하고, 설치 스크립트(`postinstall.mjs`)를 검토한다.
 
 ## 작업 기준
