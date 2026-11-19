@@ -12,7 +12,7 @@ from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import PROPOSAL_FAILED, SCHEMA_VERSION
+from . import SCHEMA_VERSION
 from .breaker import Breaker, BreakerError
 from .contracts import (
     BreakerFeedback,
@@ -22,6 +22,7 @@ from .contracts import (
     Limits,
     RoundBrief,
     Scenario,
+    Status,
 )
 from .diagnoser import Diagnoser
 from .lab import Lab, ProbeRunner
@@ -62,7 +63,7 @@ class Referee:
             "origin": scenario.origin if scenario else "breaker",
             "model": self.diagnoser.model,
             "method": self.diagnoser.method,
-            "status": "running",
+            "status": Status.RUNNING,
             "invalid_reason": "",
             "validation": None,
             "lab_log": [],
@@ -109,25 +110,25 @@ class Referee:
                 "observable": v.observable,
             }
             if not v.ok:
-                return end("rejected", "시나리오 검증 실패")
+                return end(Status.REJECTED, "시나리오 검증 실패")
 
             # 2. 정상 확인. 아니면 한 번 초기화하고 다시 본다.
             if not step("health_check", self.lab.health_check, scenario.target_url):
                 step("reset", self.lab.reset)
                 if not step("health_check", self.lab.health_check, scenario.target_url):
-                    return end("invalid", "라운드 시작 전 실험망이 정상이 아님")
+                    return end(Status.INVALID, "라운드 시작 전 실험망이 정상이 아님")
 
             # 3. 주입과 재현 확인
             for f in scenario.faults:
                 if not step(f"inject:{f.id}", self.lab.inject, f):
-                    return end("invalid", f"{f.id} 주입 실패")
+                    return end(Status.INVALID, f"{f.id} 주입 실패")
             if not step("verify_symptom", self.lab.verify_symptom, scenario):
-                return end("invalid", "증상 재현 실패")
+                return end(Status.INVALID, "증상 재현 실패")
 
             # 4. 진단: Diagnoser는 brief와 도구 창구만 받는다.
             allowed = tools_for_method(self.diagnoser.method)
             if allowed is None:
-                return end("invalid", f"알 수 없는 진단 방식: {self.diagnoser.method}")
+                return end(Status.INVALID, f"알 수 없는 진단 방식: {self.diagnoser.method}")
             brief = RoundBrief(round_id, scenario.target_url, scenario.complaint, self.limits)
             rec["brief"] = asdict(brief)
             toolbox = Toolbox(self.runner, self.lab_info, self.limits, allowed)
@@ -135,9 +136,9 @@ class Referee:
             try:
                 diagnosis = self.diagnoser.diagnose(brief, toolbox)
             except ContractError as e:
-                return end("invalid", f"진단 출력 형식 오류: {e}")
+                return end(Status.INVALID, f"진단 출력 형식 오류: {e}")
             except Exception as e:  # Diagnoser 쪽 오류로 실험망 복구가 빠지면 안 된다
-                return end("invalid", f"진단 실행 오류: {type(e).__name__}: {e}")
+                return end(Status.INVALID, f"진단 실행 오류: {type(e).__name__}: {e}")
             finally:
                 # 라운드 뒤에는 창구로 실험망을 만질 수 없게 닫고,
                 # 실행된 검사는 기록에 남긴다.
@@ -146,7 +147,7 @@ class Referee:
                 rec["rejected_calls"] = [asdict(c) for c in toolbox.rejected_calls()]
             elapsed = time.monotonic() - t0
             if diagnosis.round_id != round_id:
-                return end("invalid", "진단의 round_id가 brief와 다름")
+                return end(Status.INVALID, "진단의 round_id가 brief와 다름")
             rec["diagnosis"] = asdict(diagnosis)
 
             # 5. 채점. 이 시점부터 정답(answer)을 공개해도 된다.
@@ -160,7 +161,7 @@ class Referee:
                     probes=toolbox.probes(),
                 )
             )
-            return end("scored", "")
+            return end(Status.SCORED, "")
         finally:
             # 6. 복구와 정상화 확인. 실험망을 건드린 라운드는 무효여도 반드시 실행한다.
             if log:
@@ -185,7 +186,10 @@ class Referee:
                     scenario = breaker.propose(history)
                 except BreakerError:
                     rec = self._new_record(None)
-                    rec["status"] = PROPOSAL_FAILED
+                    # 진단이 없으므로 모델과 방식은 비운다
+                    rec["model"] = None
+                    rec["method"] = None
+                    rec["status"] = Status.PROPOSAL_FAILED
                     # 모델 응답이나 API 오류 원문은 공유 결과에 기록하지 않는다.
                     rec["invalid_reason"] = "유효한 Breaker 제안이 없어 매치를 종료했습니다."
                     rec["started_at"] = started_at
@@ -201,7 +205,7 @@ class Referee:
                     history.append(fb)
                 if rec["reset_verified"] is False:
                     return records  # 오염된 실험망에서 다음 라운드를 돌리지 않는다
-                if rec["status"] != "rejected":
+                if rec["status"] != Status.REJECTED:
                     break
         return records
 
@@ -216,17 +220,17 @@ class Referee:
 
 def feedback_for(rec: dict) -> BreakerFeedback | None:
     """대결용 시나리오를 실제 제안한 기록만 Breaker에 돌려준다."""
-    if rec["origin"] == "fixed" or rec["status"] == PROPOSAL_FAILED:
+    if rec["origin"] == "fixed" or rec["status"] == Status.PROPOSAL_FAILED:
         return None
     answer = Scenario.from_dict(rec["answer"])
     fb = BreakerFeedback(
         scenario_id=answer.scenario_id,
         faults=answer.faults,
         complaint=answer.complaint,
-        valid=rec["status"] == "scored",
+        valid=rec["status"] == Status.SCORED,
         invalid_reason=rec["invalid_reason"],
     )
-    if rec["status"] == "rejected":
+    if rec["status"] == Status.REJECTED:
         fb.invalid_reason += ": " + "; ".join(rec["validation"]["errors"])
     if rec["score"]:
         s = rec["score"]
