@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .breaker_prompt import build_prompt, with_rejection
-from .contracts import BreakerFeedback, FaultSpec, Scenario
-from .faults import FAULTS, Param
+from .breaker_strategy import plan, refused_by_lab, signature
+from .contracts import BreakerFeedback, Scenario
 from .validate import MAX_FAULTS, LabInfo, validate
 
 
@@ -61,6 +61,7 @@ class ProposalStats:
     invalid: int = 0  # 심판 검증 규칙에 걸림
     masked: int = 0  # 앞 단계 장애에 가려 클라이언트에서 볼 수 없음
     over_limit: int = 0  # 실험망이 동시에 켤 수 있는 장애 수를 넘음
+    lab_refused: int = 0  # 실험망이 주입하지 않는 주소(호스트, 정상 서버 IP)를 씀
     accepted: int = 0
 
     @property
@@ -84,29 +85,6 @@ def parse_proposal(text: str) -> dict:
         if isinstance(obj, dict):
             return obj
     raise ValueError("JSON 객체가 없음")
-
-
-def _signature(faults: list[FaultSpec], domain: str) -> tuple:
-    """중복 판정 키: 장애 ID와 실제 적용되는 매개변수 값.
-
-    생략된 선택 매개변수는 None, 생략된 domain은 대상 도메인으로 본다.
-    증상 문장과 메모는 보지 않는다.
-    """
-    items = []
-    for f in faults:
-        names = FAULTS[f.id].params if f.id in FAULTS else f.params
-        values = {n: f.params.get(n, domain if n == "domain" else None) for n in sorted(names)}
-        items.append((f.id, json.dumps(values, sort_keys=True)))
-    return tuple(sorted(items))
-
-
-def _is_fixed(name: str, p: Param) -> bool:
-    """매개변수 값이 대상 URL에서 정해지는지 본다(도메인은 대상 도메인, 포트는 대상 포트).
-
-    cert_domain처럼 다른 도메인을 고를 수 있는 값은 고정이 아니다. 장애 ID로
-    가리지 않고 Param.kind와 이름만 본다.
-    """
-    return p.kind == "port" or (p.kind == "domain" and name == "domain")
 
 
 class LLMBreaker:
@@ -143,16 +121,18 @@ class LLMBreaker:
         않는다"와 같은 기준). 거부된 라운드는 빼는데, 그래야 같은 장애를 증상만
         고쳐 다시 낼 수 있다. 거부 사유는 다음 시도의 프롬프트에 붙는다. 호출
         실패도 한 번의 시도로 세며 사유는 붙이지 않는다. max_attempts번 안에
-        통과하지 못하면 BreakerError.
+        통과하지 못하면 BreakerError. 출제 힌트(plan)는 유효 라운드만으로 계산한다.
         """
         target = Scenario(scenario_id="", target_url=self._target_url, faults=[], complaint="")
-        self._seen.update(_signature(fb.faults, target.domain) for fb in history if fb.valid)
+        self._seen.update(signature(fb.faults, target.domain) for fb in history if fb.valid)
+        hints = plan(history, self._lab, self._target_url, self._max_faults)
         prompt = build_prompt(
             history,
             self._target_url,
             self._lab,
-            exhausted=self._exhausted(target),
+            exhausted=hints.exhausted,
             max_faults=self._max_faults,
+            hints=hints,
         )
         reason = ""
         last_error = ""
@@ -172,28 +152,6 @@ class LLMBreaker:
                 return sc
         detail = reason or f"API 오류: {last_error}"
         raise BreakerError(f"{self._max_attempts}회 시도 안에 유효한 제안 없음: {detail}")
-
-    def _exhausted(self, target: Scenario) -> frozenset[str]:
-        """더 낼 수 없는 장애 ID 모음. 프롬프트 장애 목록에서 뺀다.
-
-        매개변수가 모두 고정된 장애는 서명이 하나뿐이다. 그 서명이 지난 유효
-        라운드에 있으면 한 장애만 내는 실험망에서는 더 낼 수 없다. 장애를 여럿
-        묶을 수 있으면(max_faults > 1) 다른 장애와 묶은 조합은 여전히 새 서명이
-        되므로 목록에서 빼지 않는다.
-        """
-        if self._max_faults != 1:
-            return frozenset()
-        out = set()
-        for fid, fault in FAULTS.items():
-            if not all(_is_fixed(n, p) for n, p in fault.params.items()):
-                continue
-            params = {
-                n: target.port if p.kind == "port" else target.domain
-                for n, p in fault.params.items()
-            }
-            if _signature([FaultSpec(fid, params)], target.domain) in self._seen:
-                out.add(fid)
-        return frozenset(out)
 
     def _check(self, text: str) -> tuple[Scenario | None, str]:
         """출력 하나를 시나리오로 바꿔 검사한다. (시나리오, '') 또는 (None, 사유)."""
@@ -216,7 +174,7 @@ class LLMBreaker:
             )
             if not all(isinstance(f.id, str) and isinstance(f.params, dict) for f in sc.faults):
                 raise ValueError("장애 ID는 문자열, params는 객체여야 함")
-            key = _signature(sc.faults, sc.domain)
+            key = signature(sc.faults, sc.domain)
         except (ValueError, TypeError) as e:
             self.stats.unparsable += 1
             return None, f"형식 오류: {e}"
@@ -227,6 +185,9 @@ class LLMBreaker:
         if not v.ok:
             self.stats.invalid += 1
             return None, "; ".join(v.errors)
+        if any(refused_by_lab(f, self._lab) for f in sc.faults):
+            self.stats.lab_refused += 1
+            return None, "실험망이 주입하지 않는 주소(실험망 호스트 또는 정상 서버 IP)를 씀"
         if len(sc.faults) > self._max_faults:
             self.stats.over_limit += 1
             return None, f"동시 장애 {len(sc.faults)}개, 실험망 한도 {self._max_faults}개"

@@ -3,13 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from netrunner.breaker import BreakerError, LLMBreaker, _is_fixed, parse_proposal
+from netrunner.breaker import BreakerError, LLMBreaker, parse_proposal
 from netrunner.breaker_prompt import (
     MAX_REASON_LEN,
     build_prompt,
     filter_known_labels,
     quote_one_line,
 )
+from netrunner.breaker_strategy import is_fixed
 from netrunner.contracts import BreakerFeedback, FaultOutcome, FaultSpec, read_json
 from netrunner.diagnoser import ReplayDiagnoser
 from netrunner.faults import FAULTS, Param
@@ -526,4 +527,4 @@ def test_over_limit_is_checked_before_masked():
     ],
 )
 def test_is_fixed_only_for_target_domain_and_port(name, param, expected):
-    assert _is_fixed(name, param) is expected
+    assert is_fixed(name, param) is expected
