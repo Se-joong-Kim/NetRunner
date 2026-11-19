@@ -1,0 +1,15 @@
+{
+  "scenario_id": "FS11-N1-SHOP-LONG",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 800
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "N1 지연: 경로에 800ms 지연(큰 값)"
+}

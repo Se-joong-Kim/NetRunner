@@ -1,0 +1,13 @@
+{
+  "scenario_id": "FS13-S1-NEWS",
+  "target_url": "https://news.lab/",
+  "faults": [
+    {
+      "id": "S1",
+      "params": {}
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "S1 인증서 만료: news.lab의 인증서가 만료됨"
+}

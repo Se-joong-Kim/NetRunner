@@ -1,0 +1,13 @@
+{
+  "scenario_id": "FS06-D3-NEWS",
+  "target_url": "http://news.lab/",
+  "faults": [
+    {
+      "id": "D3",
+      "params": {}
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D3 서버 무응답: 라우터에서 UDP 53 차단(news.lab 대상)"
+}

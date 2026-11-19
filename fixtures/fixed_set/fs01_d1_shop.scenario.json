@@ -1,0 +1,15 @@
+{
+  "scenario_id": "FS01-D1-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "D1",
+      "params": {
+        "domain": "shop.lab"
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D1 이름 없음: shop.lab에 NXDOMAIN"
+}

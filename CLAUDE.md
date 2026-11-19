@@ -57,7 +57,7 @@ uv run ruff format
 - `validate.py`(제안 검사), `scoring.py`(채점), `report.py`(지표와 HTML): `referee.py`가 조립한다.
 - `records.py`: 정답이 든 기록의 기본 위치(`~/netrunner-private/runs`)와 권한(폴더 700, 파일 600). 기록을 쓰는 코드는 모두 이 모듈의 `ensure_private_dir`, `open_private`, `write_private_text`를 거친다.
 - `config/lab.json`: 실험망 주소. 실험망 담당이 관리한다.
-- `fixtures/first_integration`(시연 두 라운드)과 `fixtures/scoring_examples`(채점 사례)는 `<이름>.scenario.json`과 `<이름>.diagnosis.json` 짝으로 이루어지며, `demo`와 테스트가 이 이름 규칙에 의존한다.
+- `fixtures/first_integration`(시연 두 라운드)과 `fixtures/scoring_examples`(채점 사례)는 `<이름>.scenario.json`과 `<이름>.diagnosis.json` 짝으로 이루어지며, `demo`와 테스트가 이 이름 규칙에 의존한다. `fixtures/fixed_set`은 고정 세트 초안 15개(장애 7종, 단일 장애, `fs*.scenario.json`)다. 측정 전에 동결하며, 실험망에서 구현된 장애(지금은 D2·T2)만 `lab-check`로 돌린다(#14).
 
 ### 지켜야 할 경계
 

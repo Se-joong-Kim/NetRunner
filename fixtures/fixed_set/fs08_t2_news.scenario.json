@@ -1,0 +1,15 @@
+{
+  "scenario_id": "FS08-T2-NEWS",
+  "target_url": "http://news.lab/",
+  "faults": [
+    {
+      "id": "T2",
+      "params": {
+        "port": 80
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "T2 연결 거부: 웹 서버가 80번을 RST로 거부(news.lab 대상)"
+}
