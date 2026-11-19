@@ -11,8 +11,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "opencode_sandbox.json"
+DIAGNOSER_CONFIG = ROOT / "config" / "opencode_diagnoser.json"
+DEV_CONFIG = ROOT / "opencode.json"
+# 정답이 든 경로. 파일을 읽고, 찾고, 고치는 도구마다 거부해야 한다.
+# grep은 권한 대상이 경로가 아니라 검색 문자열이라 경로 규칙이 걸리지 않는다
+# (control experiment로 확인). 그래서 grep은 경로 규칙 대신 전면 거부한다.
+ANSWER_PATHS = ("fixtures/**/*.scenario.json", "runs/**", "captures/**")
+PATH_TOOLS = ("read", "glob", "edit")
 
 
 def _permission() -> dict:
@@ -58,3 +67,37 @@ KNOWN_ACTIONS = frozenset(
 
 def test_every_permission_key_is_a_known_opencode_action():
     assert set(_permission()) <= KNOWN_ACTIONS
+
+
+def _diagnoser_permission() -> dict:
+    data = json.loads(DIAGNOSER_CONFIG.read_text(encoding="utf-8"))
+    return data["agent"]["diagnoser"]["permission"]
+
+
+def _dev_permission() -> dict:
+    return json.loads(DEV_CONFIG.read_text(encoding="utf-8"))["permission"]
+
+
+def test_diagnoser_agent_denies_every_tool_including_shell():
+    perm = _diagnoser_permission()
+    assert perm["*"] == "deny"
+    assert all(rule == "deny" for rule in perm.values())
+    assert {"read", "glob", "grep", "edit", "shell"} <= set(perm)
+    assert set(perm) <= KNOWN_ACTIONS
+
+
+@pytest.mark.parametrize("tool", PATH_TOOLS)
+@pytest.mark.parametrize("path", ANSWER_PATHS)
+def test_dev_agents_deny_answer_paths_for_every_path_tool(tool, path):
+    assert _dev_permission()[tool][path] == "deny"
+
+
+def test_dev_agents_deny_grep_because_its_rule_is_not_path_based():
+    assert _dev_permission()["grep"] == "deny"
+
+
+@pytest.mark.parametrize("tool", ("read", "glob"))
+@pytest.mark.parametrize("folder", ("runs", "captures"))
+def test_dev_agents_deny_answer_folder_names_for_pattern_tools(tool, folder):
+    # "runs/**" 규칙은 "runs" 자체를 가리키는 호출에 걸리지 않는다(control experiment로 확인).
+    assert _dev_permission()[tool][folder] == "deny"

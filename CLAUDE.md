@@ -71,7 +71,7 @@ uv run ruff format
 
 Breaker, Diagnoser, 실험망, 심판은 각자 일에 필요한 입력과 파일만 본다. 기본은 거부이고, 필요한 것만 연다. 다른 역할이 정답을 읽을 수 있으면 대결이 깨진다. 위의 전달 경계는 코드가 넘기는 것만 막으므로, 에이전트가 파일을 직접 읽는 경로도 같이 제한한다.
 
-- 정답과 장애 정보(시나리오의 `faults`와 `note`, 주입 로그, 정답 라벨, 채점 결과)는 Diagnoser 쪽 에이전트가 읽을 수 없는 곳에 둔다. Diagnoser 샌드박스의 읽기 허용에 `fixtures/**/*.scenario.json`과 `runs/`를 넣지 않는다.
+- 정답과 장애 정보(시나리오의 `faults`와 `note`, 주입 로그, 정답 라벨, 채점 결과)는 Diagnoser 쪽 에이전트가 읽지 못하게 권한으로 막는다. 막는 경로는 `fixtures/**/*.scenario.json`과 기록 폴더(`runs/`, `~/netrunner-private/`)다(아래 opencode 절). Diagnoser는 도구를 아예 열지 않는다.
 - 라운드 기록(`rounds-*.jsonl`)과 Breaker 호출 기록(`breaker-*.jsonl`, 프롬프트 해시와 원문 응답)은 Breaker가 낸 장애 조합을 담는다. 심판과 Breaker만 본다.
 - Breaker는 지난 라운드를 `BreakerFeedback`으로만 받는다. 과거 진단 파일이나 다른 매치의 기록을 직접 열지 않는다.
 - 에이전트 샌드박스 설정은 허용 목록으로 쓴다. 저장소 전체를 여는 `**` 허용은 정답과 기록 경로를 거부하는 규칙과 함께 쓰고, 그 거부가 실제로 먹는지 테스트한다.
@@ -82,10 +82,11 @@ Breaker, Diagnoser, 실험망, 심판은 각자 일에 필요한 입력과 파�
 opencode는 GLM 호출(Breaker)과 개발 에이전트에 쓴다. 원칙은 허용 목록(whitelist)이다. 환경변수, 도구 권한, 샌드박스 모두 목록에 없는 것은 거부하고, 필요한 것만 목록에 넣는다. 역할별 경로 규칙은 위 "역할별 권한"을 따른다.
 
 - Breaker 에이전트(`netrunner`)는 도구를 쓰지 않는다. `config/opencode_sandbox.json`의 모든 권한을 `deny`로 둔다. 허용을 더하려면 이유를 PR 본문에 적고 `tests/test_sandbox_config.py`를 함께 고친다.
+- Diagnoser 에이전트(`diagnoser`)는 `config/opencode_diagnoser.json`의 모든 권한을 `deny`로 둔다(셸과 검색 포함). Diagnoser는 검사를 심판의 도구 창구로만 하므로 opencode 도구가 필요 없다. 도구를 열면 정답 경로 거부를 함께 두고 `tests/test_sandbox_config.py`를 고친다. 2026-11-19에 아래 카나리 확인으로 이 설정이 실제로 막는 것을 확인했다. 설정을 바꾸면 다시 확인한다.
 - 실행은 `netrunner/glm_client.py` 한 곳에서만 한다: `opencode run --standalone --agent netrunner -m <모델> --format json --archived`. `--auto`, `--yolo`, `--dangerously-skip-permissions`(모두 묻지 않고 승인)는 쓰지 않는다. 에이전트와 설정 경로를 다른 곳에서 바꾸지 않는다.
 - 자식 프로세스(opencode, Docker Compose, HTTP 실험망 도구)에는 허용 목록의 환경변수만 넘긴다. 목록과 비밀 표지는 `netrunner/child_env.py` 한 곳에만 둔다. CLAUDE.md에는 목록을 옮겨 적지 않는다. 목록을 늘리려면 이유를 PR 본문에 적는다.
-- 이 저장소의 기본 에이전트(build, plan)는 `opencode.json`으로 기본 거부(`*: deny`)다. 목록에 있는 것만 연다. 읽기, 검색, 편집, 셸은 `ask`(묻고 승인), 질문은 `allow`다. 정답 시나리오(`fixtures/**/*.scenario.json`)는 읽기를 거부하고, `runs/`와 `captures/`는 읽기, 검색, 편집을 거부한다. 외부 경로, 웹 가져오기와 검색, 브라우저, 스킬은 `deny`다. 전역 설정(`~/.config/opencode/`)에 권한을 풀어 두지 않는다.
-- 샌드박스가 실제로 막는지는 기록으로 확인한다. 도구 호출은 `~/.local/share/opencode/opencode.db`의 `session_message`에 남는다. 먼저 읽기를 허용한 임시 설정(저장소 밖)에서 같은 요청을 보내 호출 기록이 생기는지 대조군으로 확인하고, 실제 설정에서 기록이 없는지 본다. "거부합니다"라는 대답만으로는 증거가 아니다.
+- 이 저장소의 기본 에이전트(build, plan)는 `opencode.json`으로 기본 거부(`*: deny`)다. 목록에 있는 것만 연다. 읽기, 검색, 편집, 셸은 `ask`(묻고 승인), 질문은 `allow`다. 정답 경로(`fixtures/**/*.scenario.json`, `runs/`, `captures/`)는 읽기와 편집을 거부한다. read와 glob은 패턴 문자열로 규칙을 맞추므로 폴더 이름(`runs`, `captures`)을 직접 가리키는 호출도 거부한다. 검색(grep)은 권한 대상이 검색 문자열이라 경로 규칙이 걸리지 않으므로 전면 거부한다. 셸(`shell`)은 경로 규칙을 거치지 않아 승인할 때 명령을 보고 판단한다. 외부 경로, 웹 가져오기와 검색, 브라우저, 스킬은 `deny`다. 전역 설정(`~/.config/opencode/`)에 권한을 풀어 두지 않는다.
+- 샌드박스가 실제로 막는지는 기록으로 확인한다. 방법: 저장소 `runs/`에 카나리 파일(확인용 문자열 한 줄)을 두고, `OPENCODE_CONFIG_CONTENT`로 읽기·검색·편집·셸을 허용한 대조군과 실제 설정에 같은 요청을 보낸다. `opencode run --format json` 출력의 도구 호출 결과에 카나리가 나오는지 본다. 대조군에서는 나오고 실제 설정에서는 나오지 않아야 한다. 카나리 파일은 확인 뒤 지운다. 카나리 실행 기록(정답이 아니라 확인용 문자열만 든다)은 `runs/control/`에 둔다. "거부합니다"라는 대답만으로는 증거가 아니다.
 - 인증과 기록 파일(`~/.local/share/opencode/auth.json`, `~/.config/opencode/service.json`, `~/.local/share/opencode/opencode.db`와 `-wal`·`-shm`, `~/netrunner-private/`의 파일)은 600으로 둔다. 폴더는 `~/netrunner-private/`와 그 안 `runs/`만 700이다. 기록 폴더와 파일은 코드(`records.py`)가 새로 만들 때 700과 600으로 만든다. 이미 있던 폴더의 권한은 바꾸지 않으므로, 예전에 만든 `~/netrunner-private/`는 사람이 `chmod 700`으로 맞춘다. opencode 인증·설정 파일도 사람이 맞춘다(셸 기본 umask는 0002라 새 파일은 664가 된다). 키와 비밀번호 값은 출력하거나 저장소에 넣지 않는다. 확인이 필요하면 이름과 권한만 본다.
 - 토큰이나 키를 검색하지 않는다. 환경변수는 이름 목록만 보고 값은 보지 않는다.
 - 정답이 든 기록(라운드 기록, Breaker 호출 기록, 제안 시나리오, `lab-check` 기록, `report`의 HTML)은 저장소 밖 `~/netrunner-private/`(700)에 둔다. `demo`, `run`, `lab-check`, `breaker-propose`의 `--out` 기본값이 `~/netrunner-private/runs`이고, `report`는 `--html ~/netrunner-private/...`로 쓴다. 저장소의 `runs/`에 두지 않는다. 이 폴더는 opencode 에이전트의 `external_directory` 거부로 에이전트가 읽지 못한다. `http_demo`의 기본값은 담당자(이현섭)가 #22에서 바꾼다.

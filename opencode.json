@@ -8,20 +8,22 @@
       "*.env.*": "deny",
       "fixtures/**/*.scenario.json": "deny",
       "runs/**": "deny",
-      "captures/**": "deny"
+      "captures/**": "deny",
+      "runs": "deny",
+      "captures": "deny"
     },
     "glob": {
       "*": "ask",
+      "fixtures/**/*.scenario.json": "deny",
       "runs/**": "deny",
-      "captures/**": "deny"
+      "captures/**": "deny",
+      "runs": "deny",
+      "captures": "deny"
     },
-    "grep": {
-      "*": "ask",
-      "runs/**": "deny",
-      "captures/**": "deny"
-    },
+    "grep": "deny",
     "edit": {
       "*": "ask",
+      "fixtures/**/*.scenario.json": "deny",
       "runs/**": "deny",
       "captures/**": "deny"
     },
