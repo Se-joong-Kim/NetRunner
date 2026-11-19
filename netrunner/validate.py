@@ -137,7 +137,7 @@ def _check_param(fault: Fault, name: str, value, scenario: Scenario, lab: LabInf
     where = f"{fault.id}.{name}"
     if spec.kind == "domain":
         if value not in lab.domains:
-            return f"{where}: 실험망 도메인이 아님 ({value})"
+            return f"{where}: 실험망 도메인이 아님 ({value!r})"
         if name == "domain" and value != scenario.domain:
             return (
                 f"{where}: 대상 URL의 도메인({scenario.domain})과 달라 "
@@ -148,11 +148,11 @@ def _check_param(fault: Fault, name: str, value, scenario: Scenario, lab: LabInf
     elif spec.kind == "ip":
         # ip_address는 정수도 받으므로 문자열만 허용한다(계약: IP 문자열).
         if not isinstance(value, str):
-            return f"{where}: IP 형식이 아님 ({value})"
+            return f"{where}: IP 형식이 아님 ({value!r})"
         try:
             ip = ipaddress.ip_address(value)
         except ValueError:
-            return f"{where}: IP 형식이 아님 ({value})"
+            return f"{where}: IP 형식이 아님 ({value!r})"
         if ip not in ipaddress.ip_network(lab.subnet):
             return f"{where}: 실험망 대역({lab.subnet}) 밖의 IP"
         if str(ip) == lab.web_ip:
@@ -161,7 +161,7 @@ def _check_param(fault: Fault, name: str, value, scenario: Scenario, lab: LabInf
         if not isinstance(value, int) or isinstance(value, bool):
             return f"{where}: 정수가 아님 ({value!r})"
         if spec.min is not None and value < spec.min or spec.max is not None and value > spec.max:
-            return f"{where}: 범위 밖 ({value}, 허용 {spec.min}~{spec.max})"
+            return f"{where}: 범위 밖 ({value!r}, 허용 {spec.min}~{spec.max})"
         if spec.kind == "port" and value != scenario.port:
             return f"{where}: 대상 URL 포트({scenario.port})가 아니라 관측할 수 없음"
     return None
@@ -181,15 +181,15 @@ def lab_url_error(url: object, lab: LabInfo) -> str | None:
         u = urlsplit(url)
         port = u.port
     except ValueError as e:
-        return f"URL 형식 오류 ({e})"
+        return f"URL 형식 오류 ({str(e)!r})"
     if not _URL_CHARS.fullmatch(url):
         return "URL에 허용되지 않는 문자가 있음"
     if port == 0:  # urlsplit은 0을 오류 없이 돌려준다
         return "포트는 1~65535여야 함"
     if u.scheme not in ("http", "https"):
-        return f"http/https가 아님 ({url})"
+        return f"http/https가 아님 ({url!r})"
     if u.hostname not in lab.domains:
-        return f"실험망 도메인이 아님 ({u.hostname})"
+        return f"실험망 도메인이 아님 ({u.hostname!r})"
     return None
 
 
@@ -222,14 +222,14 @@ def validate(scenario: Scenario, lab: LabInfo) -> ValidationResult:
     for spec in scenario.faults:
         fault = FAULTS.get(spec.id)
         if fault is None:
-            r.errors.append(f"{spec.id}: 허용 목록에 없는 장애")
+            r.errors.append(f"{spec.id!r}: 허용 목록에 없는 장애")
             continue
         if spec.id not in lab.enabled_faults:
-            r.errors.append(f"{spec.id}: 아직 실험망에서 구현되지 않은 장애")
+            r.errors.append(f"{spec.id!r}: 아직 실험망에서 구현되지 않은 장애")
         known.append(fault)
         for name in spec.params:
             if name not in fault.params:
-                r.errors.append(f"{spec.id}.{name}: 정의되지 않은 매개변수")
+                r.errors.append(f"{spec.id}.{name!r}: 정의되지 않은 매개변수")
         for name, p in fault.params.items():
             if name not in spec.params:
                 if p.required:

@@ -26,6 +26,7 @@ from .contracts import (
 )
 from .diagnoser import Diagnoser
 from .lab import Lab, ProbeRunner
+from .records import ensure_private_dir, open_private
 from .scoring import score
 from .toolbox import Toolbox
 from .tools import tools_for_method
@@ -212,8 +213,9 @@ class Referee:
     def _append(self, rec: dict) -> None:
         if self.records_path is None:
             return
-        self.records_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.records_path.open("a", encoding="utf-8") as fp:
+        # 정답이 든 기록이라 폴더 700, 파일 600으로 쓴다(records.py).
+        ensure_private_dir(self.records_path.parent)
+        with open_private(self.records_path) as fp:
             # 거부된 호출의 인자는 Diagnoser가 낸 그대로라 JSON이 아닐 수 있다.
             fp.write(json.dumps(rec, ensure_ascii=False, default=repr) + "\n")
 
