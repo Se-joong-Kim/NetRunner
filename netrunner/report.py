@@ -10,7 +10,7 @@ import html
 import json
 import math
 import statistics
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from .contracts import Status
@@ -44,6 +44,41 @@ def p95(values: list[float]) -> float:
 def _reproduced(rec: dict) -> bool:
     """실험망 기록에 성공한 증상 확인 단계가 있으면 True."""
     return any(s["step"] == "verify_symptom" and s["ok"] for s in rec["lab_log"])
+
+
+def summarize_breaker(records: list[dict]) -> dict:
+    """Breaker 제안이 실험망에서 얼마나 재현됐는지 센다(대결 기록용).
+
+    고정 세트 라운드는 뺀다. 제안 실패(매치 종료)는 제안 수에 넣지 않고
+    따로 센다. 진단 결과와 상관없는 숫자라서 자리표시 진단기로도 잴 수 있다.
+    """
+    recs = [r for r in records if r["origin"] == "breaker"]
+    proposals = [r for r in recs if r["status"] != Status.PROPOSAL_FAILED]
+    lab = [r for r in proposals if r["status"] != Status.REJECTED]
+    reasons = Counter(r["invalid_reason"] for r in lab if r["status"] == Status.INVALID)
+    return {
+        "proposals": len(proposals),
+        "rejected": len(proposals) - len(lab),
+        "lab_rounds": len(lab),
+        "reproduced": sum(_reproduced(r) for r in lab),
+        "reset_ok": sum(r["reset_verified"] is True for r in lab),
+        "proposal_failed": len(recs) - len(proposals),
+        "invalid_reasons": dict(reasons),
+    }
+
+
+def format_breaker_summary(s: dict) -> str:
+    """summarize_breaker 결과를 사람이 읽을 줄로 만든다."""
+    lines = [
+        f"Breaker 제안 {s['proposals']}개: 검증 거부 {s['rejected']}, "
+        f"실험망 라운드 {s['lab_rounds']}",
+        f"증상 재현 {ratio(s['reproduced'], s['lab_rounds'])}, "
+        f"정상화 확인 {ratio(s['reset_ok'], s['lab_rounds'])}, 제안 실패 {s['proposal_failed']}",
+    ]
+    if s["invalid_reasons"]:
+        reasons = ", ".join(f"{k} {n}" for k, n in sorted(s["invalid_reasons"].items()))
+        lines.append(f"무효 사유: {reasons}")
+    return "\n".join(lines)
 
 
 def summarize(records: list[dict]) -> list[dict]:
