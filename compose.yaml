@@ -1,9 +1,15 @@
+# 모든 실험망 컨테이너는 capability를 전부 내리고(cap_drop), 필요한 것만 다시 준다.
+# 권한 상승은 막는다(no-new-privileges). 실험망 네트워크는 internal이라 외부로 나가지 못한다.
+x-hardened: &hardened
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
 services:
   router:
+    <<: *hardened
     image: netrunner-lab
     build: ./lab
     command: [router]
-    cap_add: [NET_ADMIN]
     sysctls:
       net.ipv4.ip_forward: 1
     networks:
@@ -12,43 +18,53 @@ services:
       server_net:
         ipv4_address: 10.20.0.254
   client:
+    <<: *hardened
     image: netrunner-lab
     init: true
     command: [client]
-    cap_add: [NET_ADMIN, NET_RAW]
+    # NET_ADMIN: 경로 설정, NET_RAW: tcpdump, DAC_OVERRIDE: 사용자 소유 captures/에 root로 쓰기
+    cap_add: [NET_ADMIN, NET_RAW, DAC_OVERRIDE]
     volumes:
       - ./captures:/captures
     networks:
       client_net:
         ipv4_address: 10.21.0.2
   dns:
+    <<: *hardened
     image: netrunner-lab
     command: [dns]
-    cap_add: [NET_ADMIN]
+    # NET_BIND_SERVICE: 53번 포트, SETUID·SETGID: dnsmasq가 dnsmasq 사용자로 낮추는 데 필요,
+    # KILL: 낮춘 dnsmasq에 HUP을 보내 설정을 다시 읽게 한다(root 셸에서 보내려면 필요)
+    cap_add: [NET_ADMIN, NET_BIND_SERVICE, SETUID, SETGID, KILL]
     networks:
       server_net:
         ipv4_address: 10.20.0.53
   alt-dns:
+    <<: *hardened
     image: netrunner-lab
     command: [dns]
-    cap_add: [NET_ADMIN]
+    cap_add: [NET_ADMIN, NET_BIND_SERVICE, SETUID, SETGID, KILL]
     networks:
       server_net:
         ipv4_address: 10.20.0.54
   web:
+    <<: *hardened
     image: netrunner-lab
     command: [web]
-    cap_add: [NET_ADMIN]
+    # NET_BIND_SERVICE: 80번 포트, iptables 방화벽 규칙(T2)
+    cap_add: [NET_ADMIN, NET_BIND_SERVICE]
     networks:
       server_net:
         ipv4_address: 10.20.0.10
 
 networks:
   client_net:
+    internal: true
     ipam:
       config:
         - subnet: 10.21.0.0/24
   server_net:
+    internal: true
     ipam:
       config:
         - subnet: 10.20.0.0/24
