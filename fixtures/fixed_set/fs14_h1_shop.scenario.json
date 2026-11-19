@@ -1,0 +1,13 @@
+{
+  "scenario_id": "FS14-H1-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "H1",
+      "params": {}
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "H1 서버 오류: 웹 뒷단 서버가 중지돼 502"
+}

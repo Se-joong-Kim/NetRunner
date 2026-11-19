@@ -1,0 +1,13 @@
+{
+  "scenario_id": "FS05-D3-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "D3",
+      "params": {}
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D3 서버 무응답: 라우터에서 UDP 53 차단"
+}

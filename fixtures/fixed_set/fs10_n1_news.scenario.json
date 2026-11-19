@@ -1,0 +1,16 @@
+{
+  "scenario_id": "FS10-N1-NEWS",
+  "target_url": "http://news.lab/",
+  "faults": [
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 300,
+        "jitter_ms": 50
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "N1 지연·지터: 경로에 300ms와 지터 50ms"
+}

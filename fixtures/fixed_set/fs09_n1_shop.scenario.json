@@ -1,0 +1,15 @@
+{
+  "scenario_id": "FS09-N1-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 100
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "N1 지연: 경로에 100ms 지연"
+}

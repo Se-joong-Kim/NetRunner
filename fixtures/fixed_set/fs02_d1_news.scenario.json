@@ -1,0 +1,15 @@
+{
+  "scenario_id": "FS02-D1-NEWS",
+  "target_url": "http://news.lab/",
+  "faults": [
+    {
+      "id": "D1",
+      "params": {
+        "domain": "news.lab"
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D1 이름 없음: news.lab에 NXDOMAIN"
+}

@@ -1,0 +1,16 @@
+{
+  "scenario_id": "FS04-D2-NEWS",
+  "target_url": "http://news.lab/",
+  "faults": [
+    {
+      "id": "D2",
+      "params": {
+        "domain": "news.lab",
+        "ip": "10.20.0.201"
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D2 잘못된 주소: news.lab이 비어 있는 실험망 주소로 응답"
+}
