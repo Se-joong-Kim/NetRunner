@@ -18,11 +18,11 @@ uv run pytest                                   # 전체 테스트 (실험망 �
 uv run pytest tests/test_judge.py -k <이름>      # 단일 테스트
 NETRUNNER_INTEGRATION=1 uv run pytest           # Docker 실험망 테스트까지 (실험망이 떠 있어야 함)
 uv run netrunner validate <시나리오.json>...     # Breaker 출력이 계약을 지키는지 검사
-uv run netrunner demo --out runs   # 고정 입력 2라운드를 MockLab으로 실행. 정답이 든 기록은 git 제외 runs/에 둔다
-uv run netrunner run --impl docker --repeat 3 --out runs   # 같은 고정 세트를 실제 Docker 실험망에서 심판으로 반복
-uv run netrunner lab-check --repeat 3 --out runs           # 심판 없이 실험망 단계만 확인 (AI 진단·채점 없음)
-uv run netrunner report runs/<rounds.jsonl> --html runs/report.html
-uv run netrunner breaker-propose --n 3 --out runs --opencode <opencode 경로>   # Breaker 제안을 실험망 없이 n번 받아 검사 통과율을 셈
+uv run netrunner demo                           # 고정 입력 2라운드를 MockLab으로 실행. 기록은 기본값 ~/netrunner-private/runs(저장소 밖)
+uv run netrunner run --impl docker --repeat 3   # 같은 고정 세트를 실제 Docker 실험망에서 심판으로 반복
+uv run netrunner lab-check --repeat 3           # 심판 없이 실험망 단계만 확인 (AI 진단·채점 없음)
+uv run netrunner report ~/netrunner-private/runs/<rounds.jsonl> --html ~/netrunner-private/report.html
+uv run netrunner breaker-propose --n 3 --opencode <opencode 경로>   # Breaker 제안을 실험망 없이 n번 받아 검사 통과율을 셈
 ```
 
 Docker 실험망은 저장소 루트에서 띄우고 내린다. 이미지를 먼저 빌드해야 한다.
@@ -53,6 +53,7 @@ uv run ruff format
 - `toolbox.py`: 심판이 라운드마다 만들어 Diagnoser에 넘기는 도구 창구. 인자·한도를 검사하고 실제 출력을 기록하며, 채점은 이 기록으로만 한다. 실험망 쪽은 `lab.py`의 `ProbeRunner.run_probe` 하나를 구현한다.
 - `faults.py`: 장애 16종의 단일 출처. 정답 라벨, 매개변수 범위, 관측 차단 여부, 근거 지지 판정용 신호를 가진다. 검증, 채점, 보고서가 모두 여기서 읽는다.
 - `validate.py`(제안 검사), `scoring.py`(채점), `report.py`(지표와 HTML): `referee.py`가 조립한다.
+- `records.py`: 정답이 든 기록의 기본 위치(`~/netrunner-private/runs`)와 권한(폴더 700, 파일 600). 기록을 쓰는 코드는 모두 이 모듈의 `ensure_private_dir`, `open_private`, `write_private_text`를 거친다.
 - `config/lab.json`: 실험망 주소. 실험망 담당이 관리한다.
 - `fixtures/first_integration`(시연 두 라운드)과 `fixtures/scoring_examples`(채점 사례)는 `<이름>.scenario.json`과 `<이름>.diagnosis.json` 짝으로 이루어지며, `demo`와 테스트가 이 이름 규칙에 의존한다.
 
@@ -70,8 +71,8 @@ uv run ruff format
 
 Breaker, Diagnoser, 실험망, 심판은 각자 일에 필요한 입력과 파일만 본다. 기본은 거부이고, 필요한 것만 연다. 다른 역할이 정답을 읽을 수 있으면 대결이 깨진다. 위의 전달 경계는 코드가 넘기는 것만 막으므로, 에이전트가 파일을 직접 읽는 경로도 같이 제한한다.
 
-- 정답과 장애 정보(시나리오의 `faults`와 `note`, 주입 로그, 정답 라벨, 채점 결과)는 `fixtures/**/*.scenario.json`과 `runs/`에 있다. Diagnoser 쪽 에이전트는 이 경로를 권한으로 막는다(아래 opencode 절). Diagnoser는 도구를 아예 열지 않는다.
-- 라운드 기록(`runs/rounds-*.jsonl`)과 Breaker 호출 기록(`runs/breaker-*.jsonl`, 프롬프트 해시와 원문 응답)은 Breaker가 낸 장애 조합을 담는다. 심판과 Breaker만 본다.
+- 정답과 장애 정보(시나리오의 `faults`와 `note`, 주입 로그, 정답 라벨, 채점 결과)는 Diagnoser 쪽 에이전트가 읽지 못하게 권한으로 막는다. 막는 경로는 `fixtures/**/*.scenario.json`과 기록 폴더(`runs/`, `~/netrunner-private/`)다(아래 opencode 절). Diagnoser는 도구를 아예 열지 않는다.
+- 라운드 기록(`rounds-*.jsonl`)과 Breaker 호출 기록(`breaker-*.jsonl`, 프롬프트 해시와 원문 응답)은 Breaker가 낸 장애 조합을 담는다. 심판과 Breaker만 본다.
 - Breaker는 지난 라운드를 `BreakerFeedback`으로만 받는다. 과거 진단 파일이나 다른 매치의 기록을 직접 열지 않는다.
 - 에이전트 샌드박스 설정은 허용 목록으로 쓴다. 저장소 전체를 여는 `**` 허용은 정답과 기록 경로를 거부하는 규칙과 함께 쓰고, 그 거부가 실제로 먹는지 테스트한다.
 - 새 파일이나 새 경로를 만들 때 정답이나 기록이 들어가는지 먼저 본다. 권한을 바꾸는 PR은 본문에 역할별로 읽고 쓰는 경로를 적는다.
@@ -85,10 +86,10 @@ opencode는 GLM 호출(Breaker)과 개발 에이전트에 쓴다. 원칙은 허�
 - 실행은 `netrunner/glm_client.py` 한 곳에서만 한다: `opencode run --standalone --agent netrunner -m <모델> --format json --archived`. `--auto`, `--yolo`, `--dangerously-skip-permissions`(모두 묻지 않고 승인)는 쓰지 않는다. 에이전트와 설정 경로를 다른 곳에서 바꾸지 않는다.
 - 자식 프로세스(opencode, Docker Compose, HTTP 실험망 도구)에는 허용 목록의 환경변수만 넘긴다. 목록과 비밀 표지는 `netrunner/child_env.py` 한 곳에만 둔다. CLAUDE.md에는 목록을 옮겨 적지 않는다. 목록을 늘리려면 이유를 PR 본문에 적는다.
 - 이 저장소의 기본 에이전트(build, plan)는 `opencode.json`으로 기본 거부(`*: deny`)다. 목록에 있는 것만 연다. 읽기, 검색, 편집, 셸은 `ask`(묻고 승인), 질문은 `allow`다. 정답 경로(`fixtures/**/*.scenario.json`, `runs/`, `captures/`)는 읽기와 편집을 거부한다. read와 glob은 패턴 문자열로 규칙을 맞추므로 폴더 이름(`runs`, `captures`)을 직접 가리키는 호출도 거부한다. 검색(grep)은 권한 대상이 검색 문자열이라 경로 규칙이 걸리지 않으므로 전면 거부한다. 셸(`shell`)은 경로 규칙을 거치지 않아 승인할 때 명령을 보고 판단한다. 외부 경로, 웹 가져오기와 검색, 브라우저, 스킬은 `deny`다. 전역 설정(`~/.config/opencode/`)에 권한을 풀어 두지 않는다.
-- 샌드박스가 실제로 막는지는 기록으로 확인한다. 방법: 저장소 `runs/`에 카나리 파일(확인용 문자열 한 줄)을 두고, `OPENCODE_CONFIG_CONTENT`로 읽기·검색·편집·셸을 허용한 대조군과 실제 설정에 같은 요청을 보낸다. `opencode run --format json` 출력의 도구 호출 결과에 카나리가 나오는지 본다. 대조군에서는 나오고 실제 설정에서는 나오지 않아야 한다. 카나리 파일은 확인 뒤 지운다. 실행 기록은 `runs/control/`에 둔다. "거부합니다"라는 대답만으로는 증거가 아니다.
-- 인증과 기록 파일(`~/.local/share/opencode/auth.json`, `~/.config/opencode/service.json`, `~/.local/share/opencode/opencode.db`와 `-wal`·`-shm`, `runs/`의 파일)은 600으로 둔다. 폴더는 `runs/`와 `~/netrunner-private/`만 700이다. 코드는 파일 권한을 설정하지 않으므로 사람이 `umask 077` 또는 `chmod`로 맞춘다(셸 기본 umask는 0002라 새 파일은 664가 된다). 키와 비밀번호 값은 출력하거나 저장소에 넣지 않는다. 확인이 필요하면 이름과 권한만 본다.
+- 샌드박스가 실제로 막는지는 기록으로 확인한다. 방법: 저장소 `runs/`에 카나리 파일(확인용 문자열 한 줄)을 두고, `OPENCODE_CONFIG_CONTENT`로 읽기·검색·편집·셸을 허용한 대조군과 실제 설정에 같은 요청을 보낸다. `opencode run --format json` 출력의 도구 호출 결과에 카나리가 나오는지 본다. 대조군에서는 나오고 실제 설정에서는 나오지 않아야 한다. 카나리 파일은 확인 뒤 지운다. 카나리 실행 기록(정답이 아니라 확인용 문자열만 든다)은 `runs/control/`에 둔다. "거부합니다"라는 대답만으로는 증거가 아니다.
+- 인증과 기록 파일(`~/.local/share/opencode/auth.json`, `~/.config/opencode/service.json`, `~/.local/share/opencode/opencode.db`와 `-wal`·`-shm`, `~/netrunner-private/`의 파일)은 600으로 둔다. 폴더는 `~/netrunner-private/`와 그 안 `runs/`만 700이다. 기록 폴더와 파일은 코드(`records.py`)가 새로 만들 때 700과 600으로 만든다. 이미 있던 폴더의 권한은 바꾸지 않으므로, 예전에 만든 `~/netrunner-private/`는 사람이 `chmod 700`으로 맞춘다. opencode 인증·설정 파일도 사람이 맞춘다(셸 기본 umask는 0002라 새 파일은 664가 된다). 키와 비밀번호 값은 출력하거나 저장소에 넣지 않는다. 확인이 필요하면 이름과 권한만 본다.
 - 토큰이나 키를 검색하지 않는다. 환경변수는 이름 목록만 보고 값은 보지 않는다.
-- 정답이 든 기록(라운드 기록, Breaker 호출 기록, 제안 시나리오, `lab-check` 기록, `report`의 HTML)은 저장소의 `runs/`(git 제외, 폴더 700, 파일 600)에 둔다. 실행할 때 `--out runs`를 주고, `report`는 `--html runs/...`로 쓴다. 코드 기본값도 `runs/`다. 옛 위치 `~/netrunner-private/`는 비어 있고 쓰지 않는다. 이 기록을 에이전트가 읽지 못하게 하는 것은 위 경로 거부와 Diagnoser 전면 거부다. 외부 경로 거부(`external_directory`)는 저장소 밖만 막으므로, 기록이 저장소 안에 있는 지금은 경로 거부가 실제로 먹는지 카나리로 확인하는 것이 중요하다. 같은 계정의 다른 프로세스는 권한 규칙으로 막을 수 없다.
+- 정답이 든 기록(라운드 기록, Breaker 호출 기록, 제안 시나리오, `lab-check` 기록, `report`의 HTML)은 저장소 밖 `~/netrunner-private/`(700)에 둔다. `demo`, `run`, `lab-check`, `breaker-propose`의 `--out` 기본값이 `~/netrunner-private/runs`이고, `report`는 `--html ~/netrunner-private/...`로 쓴다. 저장소의 `runs/`에 두지 않는다. 이 폴더는 opencode 에이전트의 `external_directory` 거부로 에이전트가 읽지 못한다. `http_demo`의 기본값은 담당자(이현섭)가 #22에서 바꾼다.
 - 실험망 캡처(`captures/`의 pcap)는 주입 중 DNS와 TCP 흔적을 담아 정답 단서가 될 수 있다. 지금은 저장소의 `captures/`(root 소유, git 제외)에 쌓인다. 옮기는 결정은 실험망 담당이 한다.
 - opencode 세션 데이터베이스(`~/.local/share/opencode/opencode.db`)에는 정답 시나리오가 평문으로 남는다. opencode 서비스가 이 파일을 쓰는 중이라 옮기지 않는다. 정리(보존 기간, 세션 삭제, 서비스 중지)는 사용자가 정한다. 정할 때까지 이 파일을 공유하거나 커밋하지 않는다.
 - 실험망 컨테이너는 `privileged`, `network_mode: host`, 장치 마운트, Docker 소켓 마운트를 쓰지 않는다. `NET_ADMIN`과 `NET_RAW`는 필요한 컨테이너에만 준다. 쓰지 않을 때는 `docker compose down`으로 내린다.

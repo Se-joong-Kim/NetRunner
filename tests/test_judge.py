@@ -142,6 +142,25 @@ def test_malformed_target_url_is_rejected_not_crash():
     assert not validate(scenario(target_url="http://shop.lab:0/"), LAB).ok
 
 
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"faults": [{"id": "D2", "params": {"domain": "shop.lab\ud800", "ip": "10.20.0.99"}}]},
+        {"faults": [{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.\ud800"}}]},
+        {"faults": [{"id": "X\ud800", "params": {}}]},
+        {"faults": [{"id": "T2", "params": {"port": 80, "p\ud800": 1}}]},
+        {"target_url": "http://shop.lab:\ud800/"},
+    ],
+)
+def test_validate_errors_escape_model_values(kw):
+    # 짝 없는 서로게이트가 오류 문구에 그대로 들어가면 기록을 UTF-8로 쓸 때 깨진다(#29).
+    v = validate(scenario(**kw), LAB)
+    assert v.errors
+    for e in v.errors:
+        e.encode("utf-8")
+    assert any("\\ud800" in e for e in v.errors)
+
+
 def test_integer_ip_param_is_rejected():
     spec = {"id": "D2", "params": {"domain": "shop.lab", "ip": 167772170}}
     v = validate(scenario(faults=[spec]), LAB)
