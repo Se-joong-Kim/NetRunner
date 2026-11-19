@@ -17,7 +17,7 @@ from pathlib import Path
 from .breaker import BreakerError, LLMBreaker, ProposalStats
 from .breaker_log import CallJournal
 from .breaker_strategy import signature
-from .contracts import Scenario, read_json
+from .contracts import BreakerFeedback, Scenario, read_json
 from .diagnoser import ReplayDiagnoser
 from .docker_lab import DockerLab
 from .glm_client import DEFAULT_MODEL, OpencodeComplete
@@ -220,6 +220,13 @@ def format_proposal_summary(
     )
 
 
+def _as_valid_round(sc: Scenario) -> BreakerFeedback:
+    """채택한 제안을 판정 없는 유효 라운드로 바꾼다. 중복 판정과 프롬프트용이다."""
+    return BreakerFeedback(
+        scenario_id=sc.scenario_id, faults=sc.faults, complaint=sc.complaint, valid=True
+    )
+
+
 def cmd_breaker_propose(args) -> int:
     """GLM으로 시나리오를 n번 제안받아 검사 통과율을 센다. 실험망은 건드리지 않는다.
 
@@ -227,8 +234,9 @@ def cmd_breaker_propose(args) -> int:
     채택된 시나리오는 하나씩 breaker-propose-<시각>-NN.scenario.json 파일로
     채택 즉시 저장한다(뒤의 호출이 실패해도 앞의 것은 남는다). 지난 라운드 기록
     (--history)이 있으면 그 피드백을 제안 프롬프트에 넣는다. 한 건도 채택되지
-    않으면 1을 돌려준다. n번의 제안은 같은 history로 받는 독립 제안이며, 서로
-    중복으로 막지 않는다(실제 매치의 중복은 history 기준으로만 판정한다).
+    않으면 1을 돌려준다. 채택한 제안은 유효 라운드로 보고 다음 제안의 history에
+    넣는다. 그래서 같은 조합은 중복으로 거부되고, 실제 매치와 같은 조건에서 다양성을
+    잴 수 있다.
     """
     if args.n < 1:
         print("--n은 1 이상이어야 함", file=sys.stderr)
@@ -262,6 +270,7 @@ def cmd_breaker_propose(args) -> int:
             print(f"제안 실패: {e}", file=sys.stderr)
             continue
         accepted.append(sc)
+        history.append(_as_valid_round(sc))
         path = out / f"{stem}-{len(accepted):02d}.scenario.json"
         path.write_text(
             json.dumps(asdict(sc), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
