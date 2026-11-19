@@ -1,0 +1,8 @@
+{
+  "scenario_id": "D2-EMPTY",
+  "target_url": "http://shop.lab/",
+  "faults": [{"id": "D2", "params": {"domain": "shop.lab", "ip": "10.20.0.99"}}],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D2 부류 확인 1(빈 주소): 실험망 대역 안에서 호스트가 없는 IP. 설계안 4.1절 1단계"
+}

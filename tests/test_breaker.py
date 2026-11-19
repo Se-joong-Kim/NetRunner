@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from netrunner.breaker import BreakerError, LLMBreaker, parse_proposal
+from netrunner.breaker import BreakerError, LLMBreaker, _is_fixed, parse_proposal
 from netrunner.breaker_prompt import (
     MAX_REASON_LEN,
     build_prompt,
@@ -12,7 +12,7 @@ from netrunner.breaker_prompt import (
 )
 from netrunner.contracts import BreakerFeedback, FaultOutcome, FaultSpec, read_json
 from netrunner.diagnoser import ReplayDiagnoser
-from netrunner.faults import FAULTS
+from netrunner.faults import FAULTS, Param
 from netrunner.lab import MockLab
 from netrunner.referee import Referee
 from netrunner.validate import CLUE_WORDS, MAX_COMPLAINT_LEN, LabInfo
@@ -379,3 +379,151 @@ def test_accepted_combo_invalidated_later_can_be_reproposed():
     assert b.propose([]).faults[0].id == "D2"
     assert b.propose([failed]).faults[0].id == "D2"
     assert b.stats.duplicate == 0
+
+
+# --- 자체 규칙: 동시 장애 수, 가려진 장애, 고갈
+
+# 전체 장애를 켠 주소 정보. config/lab.json은 D2·T2만 켜 둔다.
+ALL_LAB = LabInfo(LAB.domains, LAB.web_ip, LAB.subnet)
+T2_PAST = BreakerFeedback(
+    scenario_id="BR-001",
+    faults=[FaultSpec("T2", {"port": 80})],
+    complaint="접속이 안 돼요.",
+    valid=True,
+)
+
+
+def test_more_faults_than_the_lab_can_inject_is_rejected_and_counted():
+    # D4와 H1은 서로 가리지 않아 검증은 통과하지만, 한 장애만 켤 수 있는 실험망에는 맞지 않는다.
+    two = {
+        **GOOD,
+        "faults": [{"id": "D4", "params": {"delay_ms": 500}}, {"id": "H1", "params": {}}],
+    }
+    model = fake_model(as_text(two), as_text(GOOD))
+    b = LLMBreaker(model, ALL_LAB, TARGET, max_faults=1)
+    assert b.propose([]).faults[0].id == "D2"
+    assert b.stats.over_limit == 1 and b.stats.invalid == 0
+    assert "동시 장애 2개" in model.prompts[1]
+
+
+def test_fault_hidden_by_an_earlier_blocking_fault_is_rejected():
+    # D2는 DNS 단계에서 끝나므로 뒤의 T2는 클라이언트에서 볼 수 없다. 검증은 경고만 한다.
+    hidden = {**GOOD, "faults": [GOOD["faults"][0], {"id": "T2", "params": {"port": 80}}]}
+    model = fake_model(as_text(hidden), as_text(GOOD))
+    b = LLMBreaker(model, ALL_LAB, TARGET)
+    sc = b.propose([])
+    assert [f.id for f in sc.faults] == ["D2"]
+    assert b.stats.masked == 1 and b.stats.invalid == 0
+    assert "앞 단계 장애에 가려" in model.prompts[1]
+
+
+def test_exhausted_fault_is_left_out_of_the_prompt_when_one_fault_per_round():
+    # T2는 매개변수가 포트 하나뿐이라 서명이 하나다. 지난 유효 라운드에 나왔으면 더 낼 수 없다.
+    model = fake_model(as_text(GOOD))
+    LLMBreaker(model, LAB, TARGET, max_faults=1).propose([T2_PAST])
+    assert "- T2:" not in model.prompts[0]
+    assert "- D2:" in model.prompts[0]
+
+
+def test_exhausted_fault_is_kept_in_the_prompt_when_faults_can_be_combined():
+    # 여러 장애를 묶을 수 있으면 T2와 다른 장애의 조합은 아직 새 서명이라 목록에서 빼지 않는다.
+    model = fake_model(as_text(GOOD))
+    LLMBreaker(model, LAB, TARGET).propose([T2_PAST])
+    assert "- T2:" in model.prompts[0]
+
+
+def test_fault_with_free_parameters_is_never_exhausted():
+    # D2의 ip는 대역 안에서 값을 바꿀 수 있으므로 한 번 나왔어도 목록에 남는다.
+    past = BreakerFeedback(
+        scenario_id="BR-001",
+        faults=[FaultSpec("D2", {"domain": "shop.lab", "ip": "10.20.0.99"})],
+        complaint="사이트가 열리지 않아요.",
+        valid=True,
+    )
+    t2 = {**GOOD, "faults": [{"id": "T2", "params": {"port": 80}}]}
+    model = fake_model(as_text(t2))
+    LLMBreaker(model, LAB, TARGET, max_faults=1).propose([past])
+    assert "- D2:" in model.prompts[0]
+
+
+def test_exhausted_fault_proposed_again_is_rejected_as_duplicate():
+    other = {**GOOD, "faults": [{"id": "T2", "params": {"port": 80}}]}
+    b = LLMBreaker(fake_model(as_text(other), as_text(GOOD)), LAB, TARGET, max_faults=1)
+    assert b.propose([T2_PAST]).faults[0].id == "D2"
+    assert b.stats.duplicate == 1
+
+
+def test_build_prompt_leaves_out_only_the_given_fault_ids():
+    prompt = build_prompt([], TARGET, LAB, exhausted={"T2"})
+    assert "- T2:" not in prompt
+    assert "- D2:" in prompt
+
+
+def test_exhaustion_needs_a_past_valid_round():
+    # 지난 라운드가 없으면 T2는 아직 한 번도 나오지 않았으므로 목록에 있어야 한다.
+    model = fake_model(as_text(GOOD))
+    LLMBreaker(model, LAB, TARGET, max_faults=1).propose([])
+    assert "- T2:" in model.prompts[0]
+
+
+def test_invalid_round_does_not_exhaust_a_fault():
+    # 재현 실패 등으로 무효가 된 라운드는 고갈을 만들지 않는다(CLAUDE.md의 유효 라운드 규칙).
+    failed = BreakerFeedback(
+        scenario_id="BR-001",
+        faults=[FaultSpec("T2", {"port": 80})],
+        complaint="접속이 안 돼요.",
+        valid=False,
+        invalid_reason="증상이 재현되지 않음",
+    )
+    model = fake_model(as_text(GOOD))
+    LLMBreaker(model, LAB, TARGET, max_faults=1).propose([failed])
+    assert "- T2:" in model.prompts[0]
+
+
+def test_exhaustion_does_not_apply_when_two_faults_can_be_combined():
+    model = fake_model(as_text(GOOD))
+    LLMBreaker(model, LAB, TARGET, max_faults=2).propose([T2_PAST])
+    assert "- T2:" in model.prompts[0]
+
+
+def test_prompt_states_the_fault_limit_of_the_lab():
+    one = fake_model(as_text(GOOD))
+    LLMBreaker(one, LAB, TARGET, max_faults=1).propose([])
+    assert "장애는 1~1개" in one.prompts[0]
+    many = fake_model(as_text(GOOD))
+    LLMBreaker(many, LAB, TARGET).propose([])
+    assert "장애는 1~3개" in many.prompts[0]
+
+
+def test_unmasked_multi_fault_proposal_is_accepted():
+    # D4와 H1은 서로 가리지 않으므로 여러 장애를 묶은 제안이 채택되어야 한다.
+    two = {
+        **GOOD,
+        "faults": [{"id": "D4", "params": {"delay_ms": 500}}, {"id": "H1", "params": {}}],
+    }
+    b = LLMBreaker(fake_model(as_text(two)), ALL_LAB, TARGET)
+    sc = b.propose([])
+    assert [f.id for f in sc.faults] == ["D4", "H1"]
+    assert b.stats.masked == 0 and b.stats.accepted == 1
+
+
+def test_over_limit_is_checked_before_masked():
+    # [D2, T2]는 두 조건에 모두 걸린다(T2는 D2에 가려짐). 한도 검사가 먼저다.
+    both = {**GOOD, "faults": [GOOD["faults"][0], {"id": "T2", "params": {"port": 80}}]}
+    b = LLMBreaker(fake_model(as_text(both), as_text(GOOD)), ALL_LAB, TARGET, max_faults=1)
+    b.propose([])
+    assert b.stats.over_limit == 1 and b.stats.masked == 0
+
+
+@pytest.mark.parametrize(
+    ("name", "param", "expected"),
+    [
+        ("domain", Param("domain"), True),
+        ("port", Param("port", min=1, max=65535), True),
+        ("cert_domain", Param("domain"), False),
+        ("ip", Param("ip"), False),
+        ("delay_ms", Param("int", min=100, max=3000), False),
+    ],
+)
+def test_is_fixed_only_for_target_domain_and_port(name, param, expected):
+    assert _is_fixed(name, param) is expected

@@ -1,14 +1,21 @@
 # NetRunner
+
+[![CI](https://github.com/Se-joong-Kim/NetRunner/actions/workflows/ci.yml/badge.svg)](https://github.com/Se-joong-Kim/NetRunner/actions/workflows/ci.yml)
+
 This repo is for a Computer Network project
 
 Breaker(장애를 심는 LLM 에이전트)와 Diagnoser(증상만 듣고 원인을 찾는 LLM 에이전트)를 Docker 실험망에서 겨루게 하고, Python 심판이 정답과 근거를 대조해 채점한다.
 
-| 담당 | 모듈 |
-|---|---|
-| 김승범 | Breaker — `netrunner/breaker.py`의 `Breaker` 구현 |
-| 양시찬 | 실험망 — `netrunner/lab.py`의 `Lab` 구현, `config/lab.json` |
-| 이현섭 | Diagnoser — `netrunner/diagnoser.py`의 `Diagnoser` 구현 |
-| 김세중 | 심판과 통합 — `referee.py`, `validate.py`, `scoring.py`, `report.py` |
+| 담당 | 모듈 | 담당 파일 |
+|---|---|---|
+| 김승범 | Breaker | `netrunner/breaker.py`, `breaker_prompt.py`, `glm_client.py`, `config/opencode_sandbox.json`, `fixtures/d2_ip_classes/`, `tests/test_breaker.py`, `test_glm_client.py`, `test_propose.py` |
+| 양시찬 | 실험망 | `netrunner/lab.py`, `docker_lab.py`, `config/lab.json`, `lab/`, `compose.yaml`, `tests/test_docker_lab.py`, `docs/plan-Yang.md`, `docs/work-summary-Yang.md` |
+| 이현섭 | Diagnoser | `netrunner/diagnoser.py`, `http_lab.py`, `http_demo.py`, `labs/http/`, `config/http_lab.json`, `fixtures/http/`, `docs/http-lab.md`, `tests/test_http_diagnoser.py`, `test_http_lab.py` |
+| 김세중 | 심판과 통합 | `netrunner/referee.py`, `validate.py`, `scoring.py`, `report.py`, `toolbox.py`, `__main__.py`, `__init__.py`, `fixtures/first_integration/`, `fixtures/scoring_examples/`, `docs/superpowers/`, `tests/test_judge.py`, `test_run.py`, `test_toolbox.py`, `test_tools.py` |
+| 계약 | 바꾸면 영향을 받는 담당자 모두 승인 | `docs/interfaces.md`, `netrunner/contracts.py`, `faults.py`, `tools.py` |
+| 공용 | 바꾸면 팀원 한 명 이상 승인 | `CLAUDE.md`, `README.md`, `pyproject.toml`, `uv.lock`, `.github/`, `.gitignore`, `.gitattributes`, `docs/planning/` |
+
+`main`에는 PR로만 합친다. 자기 담당 파일만 바꾼 PR은 CI(초록 체크)가 통과하면 올린 사람이 바로 합치고, 다른 담당자의 파일·계약·공용 파일을 바꾼 PR은 위 표의 승인을 받은 뒤 합친다. 자세한 규칙은 [CLAUDE.md의 GitHub 협업](CLAUDE.md#github-협업)에 있다.
 
 모듈 사이 데이터 형식과 장애 목록: [docs/interfaces.md](docs/interfaces.md)
 
@@ -32,7 +39,7 @@ NETRUNNER_INTEGRATION=1 uv run pytest
 docker compose down
 ```
 
-`run`은 고정 세트(`--dir`, 기본 `fixtures/first_integration`)를 심판으로 `--repeat`번 돌리고, 결과 표와 화면을 `runs/`에 남긴다. 진단은 저장된 결과를 재생하므로 AI 진단 성능이 아니라 실험망의 재현·정상화와 심판 경로를 확인하는 용도다. 결과 표의 `증상 재현`과 `초기화 확인` 열이 11주차 완료 기준(반복 시도 중 재현·정상화 성공 건수)이다. 정상화가 확인되지 않으면 그 자리에서 멈춘다. `--impl mock`은 모의 실험망으로 같은 과정을 돌리며, `demo`는 `run --impl mock --repeat 1`과 같다.
+`run`은 고정 세트(`--dir`, 기본 `fixtures/first_integration`)를 심판으로 `--repeat`번 돌리고, 결과 표와 화면을 `runs/`에 남긴다. 진단은 저장된 결과를 재생하므로 AI 진단 성능이 아니라 실험망의 재현·정상화와 심판 경로를 확인하는 용도다. 결과 표의 `증상 재현`과 `초기화 확인` 열이 완료 기준(반복 시도 중 재현·정상화 성공 건수)이다. 정상화가 확인되지 않으면 그 자리에서 멈춘다. `--impl mock`은 모의 실험망으로 같은 과정을 돌리며, `demo`는 `run --impl mock --repeat 1`과 같다.
 
 `lab-check`는 각 장애의 정상 접속, 주입, 증상 확인, 복구, 정상화를 차례로 실행한다. 결과는 `runs/`의 JSONL, 클라이언트 패킷 캡처는 `captures/`의 pcap에 저장한다. `lab-check`는 AI 진단과 채점을 수행하지 않는다.
 
