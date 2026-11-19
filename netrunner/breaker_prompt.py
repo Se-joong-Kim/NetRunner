@@ -11,6 +11,7 @@ import json
 import unicodedata
 from collections.abc import Collection, Mapping, Sequence
 
+from .breaker_strategy import Hints, lab_refused_addresses
 from .contracts import BreakerFeedback, Scenario
 from .faults import FAULTS, Fault, Param
 from .validate import CLUE_WORDS, CONFLICT_GROUPS, MAX_COMPLAINT_LEN, MAX_FAULTS, LabInfo
@@ -63,7 +64,7 @@ def _param_how(name: str, p: Param, target: Scenario, lab: LabInfo) -> str:
             return f"대상 도메인 {target.domain}"
         return f"실험망 도메인({', '.join(lab.domains)}) 중 대상과 다른 것"
     if p.kind == "ip":
-        return f"실험망 대역 {lab.subnet} 안의 IP, 정상 서버 {lab.web_ip} 제외"
+        return f"실험망 대역 {lab.subnet} 안의 IP, 아래 주입할 수 없는 주소 제외"
     if p.kind == "port":
         return f"정수, 대상 포트 {target.port}로 고정"
     return f"정수 {p.min}~{p.max}"
@@ -97,6 +98,34 @@ def _history_line(fb: BreakerFeedback, known: Collection[str]) -> str:
     )
 
 
+def _unit_label(unit: str) -> str:
+    """출제 단위를 모델이 읽을 이름으로 바꾼다. 내부 표기 ip=empty는 빈 주소로 설명한다."""
+    return unit.replace("/ip=empty", " (빈 주소)")
+
+
+def _strategy_lines(hints: Hints) -> list[str]:
+    """출제 힌트 절. 근거만 적고 고르는 일은 모델에게 맡긴다."""
+    tried = [
+        f"{_unit_label(unit)} {rate:.2f}"
+        for unit, rate in hints.ranked
+        if unit not in hints.untried
+    ]
+    untried = [_unit_label(unit) for unit in hints.untried]
+    lines = [
+        "## 출제 전략",
+        "아래는 지난 유효 라운드로 계산한 근거다. 무엇을 낼지는 네가 정한다.",
+        f"- 오답률(평활, 높을수록 진단이 자주 틀림): {', '.join(tried) or '시도 없음'}",
+        f"- 아직 안 낸 단위: {', '.join(untried) or '없음'}",
+        f"- 같은 조합이 이미 나와 더 낼 수 없는 장애: {', '.join(hints.exhausted) or '없음'}",
+    ]
+    if hints.over_predicted:
+        lines.append(
+            f"- 진단이 근거 없이 자주 고른 라벨(오탐): {', '.join(hints.over_predicted)}. "
+            "증상이 이 라벨과 비슷한 장애를 고르면 진단을 시험할 수 있다."
+        )
+    return lines
+
+
 def build_prompt(
     history: list[BreakerFeedback],
     target_url: str,
@@ -104,13 +133,14 @@ def build_prompt(
     faults: Mapping[str, Fault] = FAULTS,
     exhausted: Collection[str] = frozenset(),
     max_faults: int = MAX_FAULTS,
+    hints: Hints | None = None,
 ) -> str:
     """지난 라운드와 실험망 정보로 Breaker 프롬프트 한 문자열을 만든다.
 
     history에는 고정 세트 라운드가 없어야 한다(심판의 feedback_for가 거른다).
     exhausted에 든 장애 ID는 장애 목록에서 뺀다. 오탐 라벨 판정은 그대로
     전체 장애 목록을 쓴다. max_faults는 실험망이 한 라운드에 켤 수 있는
-    동시 장애 수다.
+    동시 장애 수다. hints가 있으면 출제 전략 절을 붙인다.
     """
     target = Scenario(scenario_id="", target_url=target_url, faults=[], complaint="")
     enabled = [faults[i] for i in lab.enabled_faults if i in faults and i not in exhausted]
@@ -129,9 +159,10 @@ def build_prompt(
             f"- 대상 URL: {target_url} (도메인 {target.domain}, 포트 {target.port})",
             f"- 증상 문장은 {MAX_COMPLAINT_LEN}자 이내. 다음 단어를 쓰지 않는다: "
             + ", ".join(CLUE_WORDS),
-            f"- 정상 서버 IP({lab.web_ip})와 같은 IP는 장애가 아니다.",
-            "- 진단이 틀렸던 장애(cause_wrong, stage_wrong, missed)를 다시 시험해 볼 만하다.",
-            "  같은 장애 조합과 매개변수는 반복하지 않는다.",
+            "- 주입할 수 없는 주소(실험망 호스트와 정상 서버)는 ip로 쓰지 않는다: "
+            + ", ".join(sorted(lab_refused_addresses(lab))),
+            "- 진단이 틀렸던 장애(cause_wrong, stage_wrong, missed) 가운데 장애 목록에 남은 것을",
+            "  다시 시험해 볼 만하다. 같은 장애 조합과 매개변수는 반복하지 않는다.",
             "",
             "## 장애 목록",
             *(_fault_line(f, target, lab) for f in enabled),
@@ -141,6 +172,7 @@ def build_prompt(
             "오탐의 '기타 N건'은 정답 라벨과 표기가 다른 오탐 수다.",
             history_block,
             "",
+            *(_strategy_lines(hints) + [""] if hints is not None else []),
             "## 출력",
             "JSON 객체 하나만 출력한다. 다른 말은 쓰지 않는다.",
             '{"faults": [{"id": "장애 ID", "params": {...}}], '
