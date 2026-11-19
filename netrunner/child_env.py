@@ -7,6 +7,7 @@ opencode, Docker Compose, HTTP 실험망 도구가 함께 쓴다. 목록에 있�
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 
 NAMES = frozenset(
@@ -37,15 +38,27 @@ NAMES = frozenset(
     }
 )
 PREFIXES = ("LC_", "XDG_")
+# Windows에서만 넘기는 시스템 변수. Node.js(OpenSSL)는 SYSTEMROOT가 없으면 난수
+# 생성기를 초기화하지 못해 시작하자마자 종료한다(#40). USERPROFILE과 APPDATA는
+# 실제 GLM 호출로 필요한지 확인한 뒤 넣는다.
+WINDOWS_NAMES = frozenset(
+    {"SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "SYSTEMDRIVE", "TEMP", "TMP"}
+)
+IS_WINDOWS = os.name == "nt"
 # 접두사로 허용해도 이름에 이 표지가 있으면 넘기지 않는다(예: LC_TOKEN).
 SECRET_MARKERS = ("TOKEN", "KEY", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH")
 
 
 def is_allowed(name: str) -> bool:
-    """허용 목록의 이름이거나 허용 접두사로 시작하고, 비밀 표지가 없는지 본다."""
+    """허용 목록의 이름이거나 허용 접두사로 시작하고, 비밀 표지가 없는지 본다.
+
+    Windows에서는 WINDOWS_NAMES의 이름도 허용한다. 이름은 대문자로 비교한다.
+    """
     if any(marker in name.upper() for marker in SECRET_MARKERS):
         return False
-    return name in NAMES or name.startswith(PREFIXES)
+    if name in NAMES or name.startswith(PREFIXES):
+        return True
+    return IS_WINDOWS and name.upper() in WINDOWS_NAMES
 
 
 def child_environment(
