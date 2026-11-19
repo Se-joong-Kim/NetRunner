@@ -1,4 +1,4 @@
-"""python -m netrunner {validate|demo|run|report|lab-check} 명령 진입점.
+"""python -m netrunner {validate|demo|run|report|lab-check|propose} 명령 진입점.
 
 객체를 조립하는 가장 바깥 층이다.
 """
@@ -7,22 +7,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
+from .breaker import BreakerError, LLMBreaker
 from .contracts import Scenario, read_json
 from .diagnoser import ReplayDiagnoser
 from .docker_lab import DockerLab
+from .glm_client import OpencodeComplete
 from .lab import Lab, MockLab, ReplayRunner
-from .referee import Referee
+from .referee import Referee, feedback_for
 from .report import format_table, load_records, render_html, summarize
 from .validate import LabInfo, validate
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LAB = ROOT / "config" / "lab.json"
+DEFAULT_SANDBOX = ROOT / "config" / "opencode_sandbox.json"
 
 
 def cmd_validate(args) -> int:
@@ -196,6 +200,27 @@ def cmd_lab_check(args) -> int:
     return 0
 
 
+def cmd_propose(args) -> int:
+    """GLM으로 시나리오 하나를 제안받아 검사를 통과한 것을 출력한다.
+
+    실험망은 건드리지 않는다. 지난 라운드 기록(--history)이 있으면 그 피드백을
+    제안 프롬프트에 넣는다.
+    """
+    info = LabInfo.load(args.lab)
+    history = []
+    if args.history:
+        history = [fb for rec in load_records(args.history) if (fb := feedback_for(rec))]
+    complete = OpencodeComplete(binary=args.opencode, root=ROOT, config=DEFAULT_SANDBOX)
+    breaker = LLMBreaker(complete, info, args.target, max_faults=args.max_faults)
+    try:
+        sc = breaker.propose(history)
+    except BreakerError as e:
+        print(f"제안 실패: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps(asdict(sc), ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """명령줄 인자를 해석해 하위 명령을 실행한다."""
     ap = argparse.ArgumentParser(prog="netrunner", description="NetRunner 심판·통합 도구")
@@ -228,6 +253,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", default=str(ROOT / "runs"))
     p.add_argument("--repeat", type=int, default=1)
     p.set_defaults(func=cmd_lab_check)
+
+    p = sub.add_parser("propose", help="GLM으로 시나리오 하나를 제안받아 출력(실험망 미사용)")
+    p.add_argument("--target", default="http://shop.lab/", help="대상 URL")
+    p.add_argument("--max-faults", type=int, default=1, help="실험망이 한 라운드에 켤 장애 수")
+    p.add_argument("--history", help="지난 라운드 기록 JSONL(없으면 첫 제안)")
+    p.add_argument(
+        "--opencode",
+        default=os.environ.get("NETRUNNER_OPENCODE", "opencode"),
+        help="opencode 실행 파일 경로(기본: NETRUNNER_OPENCODE 또는 PATH의 opencode)",
+    )
+    p.set_defaults(func=cmd_propose)
 
     args = ap.parse_args(argv)
     return args.func(args)
