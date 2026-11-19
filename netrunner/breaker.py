@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .breaker_prompt import build_prompt, with_rejection
-from .breaker_strategy import plan, refused_values, signature
+from .breaker_strategy import plan, signature
 from .contracts import BreakerFeedback, Scenario
 from .validate import MAX_FAULTS, LabInfo, validate
 
@@ -66,9 +66,6 @@ class ProposalStats:
     invalid: int = 0  # 심판 검증 규칙에 걸림
     masked: int = 0  # 앞 단계 장애에 가려 클라이언트에서 볼 수 없음
     over_limit: int = 0  # 실험망이 동시에 켤 수 있는 장애 수를 넘음
-    lab_refused: int = (
-        0  # 실험망 호스트 주소를 IP로 씀(주입되지 않음). 정상 서버 주소는 validate가 먼저 거부
-    )
     accepted: int = 0
 
     @property
@@ -227,10 +224,6 @@ class LLMBreaker:
             if any("원인 단서" in e for e in v.errors):
                 reason += ". 그 단어를 빼고 같은 장애로 다시 쓴다"
             return None, reason
-        refused = sorted({v for f in sc.faults for v in refused_values(f, self._lab)})
-        if refused:
-            self.stats.lab_refused += 1
-            return None, f"실험망이 주입하지 않는 주소를 씀: {', '.join(refused)}"
         if len(sc.faults) > self._max_faults:
             self.stats.over_limit += 1
             return None, (

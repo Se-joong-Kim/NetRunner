@@ -214,7 +214,7 @@ def format_proposal_summary(
             f"채택률(채택/호출) {stats.accepted / calls:.0%}, "
             f"형식 오류율 {stats.unparsable / calls:.0%}",
             f"거부: 형식 {stats.unparsable}, 중복 {stats.duplicate}, 검증 {stats.invalid}, "
-            f"실험망 주소 {stats.lab_refused}, 동시 장애 초과 {stats.over_limit}, "
+            f"동시 장애 초과 {stats.over_limit}, "
             f"가려짐 {stats.masked}, API 오류 {stats.api_errors}",
         ]
     )

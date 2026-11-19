@@ -1,15 +1,16 @@
 """지난 유효 라운드로 다음 출제 방향(힌트)을 계산한다.
 
 파일 입출력과 모델 호출이 없는 순수 계산이다. 출제 단위는 장애 ID이고,
-IP 매개변수가 있는 장애는 주소 부류를 덧붙인다(ip=empty는 빈 주소).
-실험망은 호스트 주소를 D2의 가짜 응답으로 주입하지 않는다(docker_lab.inject,
-1단계에서 확인). 그래서 호스트 부류는 출제 단위에 넣지 않고, 제안도
-refused_by_lab으로 거부한다. 중복 서명과 고갈 판정도 여기서 정해 Breaker와
-프롬프트가 같은 규칙을 쓴다.
+IP 매개변수가 있는 장애는 주소 부류를 덧붙인다. ip=host는 실험망 호스트
+주소이고, 그 밖의 IP(빈 주소 포함)는 ip=empty에 묶는다. 실험망은 호스트
+주소도 D2 가짜 응답으로 주입한다(PR #34). 정상 서버 주소는 validate가
+거부한다. 중복 서명과 고갈 판정도 여기서 정해 Breaker와 프롬프트가 같은
+규칙을 쓴다.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -67,30 +68,25 @@ def _ip_names(spec: Fault) -> list[str]:
     return [n for n, p in spec.params.items() if p.kind == "ip"]
 
 
-def lab_refused_addresses(lab: LabInfo) -> frozenset[str]:
-    """실험망이 주입하지 않는 주소: 실험망 호스트와 정상 서버 주소.
+def _in_subnet(address: str, subnet: str) -> bool:
+    """주소가 실험망 대역 안에 있는지 본다. 형식이 틀리면 False."""
+    try:
+        return ipaddress.ip_address(address) in ipaddress.ip_network(subnet)
+    except ValueError:
+        return False
 
-    docker_lab.inject가 같은 목록으로 D2 주입을 거부한다.
+
+def host_addresses(lab: LabInfo) -> frozenset[str]:
+    """호스트 부류의 IP 값: 실험망 대역 안의 호스트 주소에서 정상 서버를 뺀다.
+
+    실험망 설정의 hosts에는 정상 서버(web)도 들어 있다. 정상 서버 IP는 장애가
+    아니므로(validate가 거부) 이 부류에서 뺀다.
     """
-    return frozenset(lab.hosts.values()) | {lab.web_ip}
-
-
-def refused_values(fault: FaultSpec, lab: LabInfo) -> list[str]:
-    """장애의 IP 매개변수 중 실험망이 주입하지 않는 값 목록."""
-    spec = FAULTS.get(fault.id)
-    if spec is None:
-        return []
-    refused = lab_refused_addresses(lab)
-    return [
-        fault.params[n]
-        for n in _ip_names(spec)
-        if isinstance(fault.params.get(n), str) and fault.params[n] in refused
-    ]
-
-
-def refused_by_lab(fault: FaultSpec, lab: LabInfo) -> bool:
-    """IP 매개변수가 실험망이 주입하지 않는 주소인지 본다."""
-    return bool(refused_values(fault, lab))
+    return frozenset(
+        address
+        for address in lab.hosts.values()
+        if address != lab.web_ip and _in_subnet(address, lab.subnet)
+    )
 
 
 def canonical_label(label: str) -> str | None:
@@ -107,21 +103,35 @@ def canonical_label(label: str) -> str | None:
 
 
 def unit_of(fault: FaultSpec, lab: LabInfo) -> str:
-    """피드백 장애 하나가 속한 출제 단위. IP 장애면 주소 부류를 붙인다."""
+    """피드백 장애 하나가 속한 출제 단위. IP 장애면 주소 부류를 붙인다.
+
+    IP 매개변수 중 하나라도 호스트 주소면 호스트 부류, 아니면 빈 주소 부류다.
+    """
     spec = FAULTS.get(fault.id)
     if spec is None or not _ip_names(spec):
         return fault.id
-    return f"{fault.id}/{HOST_IP if refused_by_lab(fault, lab) else EMPTY_IP}"
+    hosts = host_addresses(lab)
+    on_host = any(
+        isinstance(fault.params.get(n), str) and fault.params[n] in hosts for n in _ip_names(spec)
+    )
+    return f"{fault.id}/{HOST_IP if on_host else EMPTY_IP}"
 
 
 def units(lab: LabInfo, faults: Mapping[str, Fault] = FAULTS) -> list[str]:
-    """실험망이 켠 장애의 출제 단위 목록. 호스트 부류는 실험망이 주입하지 않아 뺀다."""
+    """실험망이 켠 장애의 출제 단위 목록.
+
+    IP 장애는 빈 주소 부류를 내고, 실험망 호스트 주소가 있으면 호스트 부류도 낸다.
+    """
+    classes = [EMPTY_IP, HOST_IP] if host_addresses(lab) else [EMPTY_IP]
     out = []
     for fid in lab.enabled_faults:
         spec = faults.get(fid)
         if spec is None:
             continue
-        out.append(f"{fid}/{EMPTY_IP}" if _ip_names(spec) else fid)
+        if _ip_names(spec):
+            out.extend(f"{fid}/{cls}" for cls in classes)
+        else:
+            out.append(fid)
     return sorted(set(out))
 
 

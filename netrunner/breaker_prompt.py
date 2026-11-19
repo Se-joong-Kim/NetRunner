@@ -11,7 +11,7 @@ import json
 import unicodedata
 from collections.abc import Collection, Mapping, Sequence
 
-from .breaker_strategy import Hints, lab_refused_addresses
+from .breaker_strategy import EMPTY_IP, HOST_IP, Hints, host_addresses
 from .contracts import BreakerFeedback, Scenario
 from .faults import FAULTS, Fault, Param
 from .validate import CLUE_WORDS, CONFLICT_GROUPS, MAX_COMPLAINT_LEN, MAX_FAULTS, LabInfo
@@ -64,7 +64,7 @@ def _param_how(name: str, p: Param, target: Scenario, lab: LabInfo) -> str:
             return f"대상 도메인 {target.domain}"
         return f"실험망 도메인({', '.join(lab.domains)}) 중 대상과 다른 것"
     if p.kind == "ip":
-        return f"실험망 대역 {lab.subnet} 안의 IP, 아래 주입할 수 없는 주소 제외"
+        return f"실험망 대역 {lab.subnet} 안의 IP, 정상 서버({lab.web_ip}) 제외"
     if p.kind == "port":
         return f"정수, 대상 포트 {target.port}로 고정"
     return f"정수 {p.min}~{p.max}"
@@ -98,9 +98,23 @@ def _history_line(fb: BreakerFeedback, known: Collection[str]) -> str:
     )
 
 
+# 출제 단위의 주소 부류를 모델이 읽을 이름. 내부 표기(ip=...)는 보이지 않게 한다.
+_CLASS_NAMES = {EMPTY_IP: "빈 주소", HOST_IP: "실험망 호스트 주소"}
+
+
 def _unit_label(unit: str) -> str:
-    """출제 단위를 모델이 읽을 이름으로 바꾼다. 내부 표기 ip=empty는 빈 주소로 설명한다."""
-    return unit.replace("/ip=empty", " (빈 주소)")
+    """출제 단위를 모델이 읽을 이름으로 바꾼다. 주소 부류는 괄호 안에 쓴다."""
+    fid, sep, cls = unit.partition("/")
+    return f"{fid} ({_CLASS_NAMES.get(cls, cls)})" if sep else fid
+
+
+def _address_rule(lab: LabInfo) -> str:
+    """IP 값 규칙 한 줄. 정상 서버 주소는 쓰지 않고, 호스트 주소는 호스트 부류로 쓴다."""
+    text = f"- 정상 서버 주소({lab.web_ip})는 ip로 쓰지 않는다."
+    hosts = sorted(host_addresses(lab))
+    if hosts:
+        text += f" 실험망 호스트 주소({', '.join(hosts)})는 호스트 부류로 쓸 수 있다."
+    return text
 
 
 def _strategy_lines(hints: Hints) -> list[str]:
@@ -170,8 +184,7 @@ def build_prompt(
             " 대상은 '사이트', '쇼핑몰'처럼 부른다.",
             '  나쁜 예: "http://shop.lab/ 에 접속이 안 된다". '
             '좋은 예: "shop.lab 쇼핑몰 사이트에 들어가지 않는다".',
-            "- 주입할 수 없는 주소(실험망 호스트와 정상 서버)는 ip로 쓰지 않는다: "
-            + ", ".join(sorted(lab_refused_addresses(lab))),
+            _address_rule(lab),
             "- 진단이 틀렸던 장애(cause_wrong, stage_wrong, missed) 가운데 장애 목록에 남은 것을",
             "  다시 시험해 볼 만하다. 같은 장애 조합과 매개변수는 반복하지 않는다.",
             "",
