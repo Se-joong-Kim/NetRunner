@@ -68,6 +68,27 @@ def test_passes_prompt_on_stdin_with_agent_model_and_sandbox_config():
     assert "prompt" not in " ".join(argv)
 
 
+def test_runs_a_private_server_and_never_auto_approves_permissions():
+    run = FakeRun(stdout=_text_event("ok"))
+    _complete(run)("x")
+    argv = run.calls[0]["argv"]
+    assert "--standalone" in argv
+    assert "--auto" not in argv
+
+
+def test_child_environment_drops_secret_looking_variables(monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "값은-여기-없음")
+    monkeypatch.setenv("DEMO_API_KEY", "값은-여기-없음")
+    monkeypatch.setenv("LC_ALL", "ko_KR.UTF-8")
+    run = FakeRun(stdout=_text_event("ok"))
+    _complete(run)("x")
+    env = run.calls[0]["env"]
+    assert "CLAUDE_CODE_MESSAGING_TOKEN" not in env
+    assert "DEMO_API_KEY" not in env
+    assert "PATH" in env and "HOME" in env and "LC_ALL" in env
+    assert env["OPENCODE_CONFIG"] == str(CONFIG.resolve())
+
+
 def test_nonzero_exit_raises_with_stderr():
     run = FakeRun(stdout="", returncode=2, stderr="인증 실패")
     with pytest.raises(CompletionError, match="종료 코드 2.*인증 실패"):

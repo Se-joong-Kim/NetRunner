@@ -75,6 +75,23 @@ Breaker, Diagnoser, 실험망, 심판은 각자 일에 필요한 입력과 파�
 - 에이전트 샌드박스 설정은 허용 목록으로 쓴다. 저장소 전체를 여는 `**` 허용은 정답과 기록 경로를 거부하는 규칙과 함께 쓰고, 그 거부가 실제로 먹는지 테스트한다.
 - 새 파일이나 새 경로를 만들 때 정답이나 기록이 들어가는지 먼저 본다. 권한을 바꾸는 PR은 본문에 역할별로 읽고 쓰는 경로를 적는다.
 
+### opencode 권한과 샌드박스
+
+opencode는 GLM 호출(Breaker)과 개발 에이전트에 쓴다. 권한은 기본 거부로 두고 필요한 것만 연다. 역할별 경로 규칙은 위 "역할별 권한"을 따른다.
+
+- Breaker 에이전트(`netrunner`)는 도구를 쓰지 않는다. `config/opencode_sandbox.json`의 모든 권한을 `deny`로 둔다. 허용을 더하려면 이유를 PR 본문에 적고 `tests/test_sandbox_config.py`를 함께 고친다.
+- 실행은 `netrunner/glm_client.py` 한 곳에서만 한다: `opencode run --standalone --agent netrunner --format json --archived`. `--auto`(묻지 않고 승인)는 쓰지 않는다. 에이전트와 설정 경로를 다른 곳에서 바꾸지 않는다.
+- 자식 프로세스에는 환경변수 허용 목록만 넘긴다(`PATH`, `HOME`, 로캘, 프록시, 인증서 경로). 토큰, 키, 비밀번호 이름의 변수는 넘기지 않는다. 목록을 늘리려면 이유를 적는다.
+- 이 저장소의 기본 에이전트(build, plan)는 `opencode.json`으로 `ask`를 기본으로 한다. 외부 경로(`external_directory`), 웹 가져오기와 검색, 브라우저는 `deny`다. `.env` 읽기도 `deny`다. 전역 설정(`~/.config/opencode/`)에 권한을 풀어 두지 않는다.
+- 샌드박스가 실제로 막는지는 기록으로 확인한다. 도구 호출은 `~/.local/share/opencode/opencode.db`의 `session_message`에 남는다. 먼저 읽기를 허용한 임시 설정(저장소 밖)에서 같은 요청을 보내 호출 기록이 생기는지 대조군으로 확인하고, 실제 설정에서 기록이 없는지 본다. "거부합니다"라는 대답만으로는 증거가 아니다.
+- 인증과 기록 파일(`~/.local/share/opencode/auth.json`, `service.json`, `opencode.db`, `runs/`)은 600으로 둔다. 키와 비밀번호 값은 출력하거나 저장소에 넣지 않는다. 확인이 필요하면 이름과 권한만 본다.
+- 토큰이나 키를 검색하지 않는다. 환경변수는 이름 목록만 보고 값은 보지 않는다.
+- 세션 데이터베이스와 `runs/`에는 정답 시나리오(장애, `note`)가 평문으로 남는다. 보존 기간과 정리 방법은 아직 정하지 않았다. 정할 때까지 이 경로를 공유하거나 커밋하지 않는다.
+- 실험망 컨테이너는 `privileged`, `network_mode: host`, 장치 마운트, Docker 소켓 마운트를 쓰지 않는다. `NET_ADMIN`과 `NET_RAW`는 필요한 컨테이너에만 준다. 쓰지 않을 때는 `docker compose down`으로 내린다.
+- 이 계정은 `docker` 그룹이라 Docker 데몬 접근이 root 권한과 같다. 모델 에이전트(opencode)가 도는 경로에서는 Docker를 부르지 않는다. 실험망 코드는 사람이 실행한 명령에서만 Docker를 부른다.
+- `--opencode`와 `NETRUNNER_OPENCODE`로 고르는 실행 파일 경로는 신뢰하는 것만 쓴다. PATH에서 찾은 실행 파일도 같은 기준이다.
+- `@opencode/cli`는 로컬 설치(`.venv-opencode/`, git 제외)에 있고 그 안의 `package-lock.json`으로 버전을 잠근다. 저장소에는 잠금 파일이 없으므로 팀원은 같은 버전을 직접 맞춘다. 버전을 올릴 때는 `npm audit signatures`로 서명을 확인하고, 설치 스크립트(`postinstall.mjs`)를 검토한다.
+
 ## 작업 기준
 
 - 작업을 시작하기 전에 사용자 홈의 `.claude/projects/<프로젝트 식별자>/memory/` 디렉터리(Claude Code가 프로젝트마다 두는 메모리)에서 `type: user` 항목을 찾아 지금 대화하는 사람이 누구인지 확인한다. 식별자는 프로젝트 경로에서 Claude Code가 정한 이름이므로 직접 짓지 않는다.
