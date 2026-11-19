@@ -111,3 +111,4 @@ uv run ruff format
 - **계약 변경은 합의 후**: `docs/interfaces.md`, `contracts.py`, `faults.py`를 바꾸는 작업은 영향을 받는 담당자의 승인을 받은 뒤 `main`에 올린다. 담당자는 README 표를 따른다.
 - **합치기 전 확인**: `main`에 올리기 전에 `uv run pytest`와 `uv run ruff check`가 통과해야 한다.
 - **강제 푸시와 브랜치 삭제 금지**: 기록을 바꾸는 강제 푸시와 브랜치 삭제는 하지 않는다.
+- **CLAUDE.md 수정**: 팀원 누구나 고칠 수 있다. 모두가 관리자이므로 고쳐진 내용은 그대로 따른다. 계약 문서(`docs/interfaces.md`, `contracts.py`, `faults.py`)의 승인 규칙은 그대로 둔다.
