@@ -117,3 +117,4 @@ uv run ruff format
 - **올리기 전 확인**: PR을 올리기 전에 로컬에서 `uv run pytest`와 `uv run ruff check`를 돌려 본다. CI는 이를 다시 확인할 뿐이다.
 - **강제 푸시와 브랜치 삭제 금지**: 기록을 바꾸는 강제 푸시와 브랜치 삭제는 하지 않는다.
 - **에이전트의 병합과 승인**: Claude 같은 에이전트는 PR 병합·승인과 브랜치 삭제를 사용자가 시킬 때만 한다.
+- **CLAUDE.md 수정**: 팀원 누구나 고칠 수 있다. 모두가 관리자이므로 고쳐진 내용은 그대로 따른다. 계약 문서(`docs/interfaces.md`, `contracts.py`, `faults.py`, `tools.py`)의 승인 규칙은 그대로 둔다.
