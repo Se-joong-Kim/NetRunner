@@ -1,4 +1,4 @@
-"""python -m netrunner {validate|demo|run|report|lab-check|breaker-propose} 명령 진입점.
+"""python -m netrunner {validate|demo|run|report|lab-check|breaker-propose|match} 명령 진입점.
 
 객체를 조립하는 가장 바깥 층이다.
 """
@@ -17,15 +17,23 @@ from pathlib import Path
 from .breaker import BreakerError, LLMBreaker, ProposalStats
 from .breaker_log import CallJournal
 from .breaker_strategy import signature
-from .contracts import BreakerFeedback, Scenario, read_json
-from .diagnoser import ReplayDiagnoser
+from .contracts import BreakerFeedback, Diagnosis, RoundBrief, Scenario, read_json
+from .diagnoser import Diagnoser, ReplayDiagnoser
 from .docker_lab import DockerLab
 from .glm_client import DEFAULT_MODEL, OpencodeComplete
 from .lab import Lab, MockLab, ReplayRunner
 from .records import default_runs_dir, ensure_private_dir, open_private, write_private_text
 from .referee import Referee, feedback_for
-from .report import format_table, load_records, render_html, summarize
-from .validate import LabInfo, validate
+from .report import (
+    format_breaker_summary,
+    format_table,
+    load_records,
+    render_html,
+    summarize,
+    summarize_breaker,
+)
+from .toolbox import Toolbox
+from .validate import LabInfo, lab_url_error, validate
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LAB = ROOT / "config" / "lab.json"
@@ -57,6 +65,28 @@ LAB_IMPLS: dict[str, Callable[[Path], Lab]] = {
 # 실험망 자체가 검사 도구(run_probe)를 실행하는 구현. 여기 없는 구현은 저장된
 # 진단의 검사 출력을 재생한다. DockerLab.run_probe가 생기면 "docker"를 넣는다.
 PROBES_FROM_LAB: frozenset[str] = frozenset()
+
+
+class NoDiagnosis:
+    """원인을 하나도 답하지 않는 자리표시 진단기.
+
+    실제 Diagnoser가 main에 들어오기 전에 match로 Breaker 쪽 숫자(검증 통과,
+    재현, 정상화)를 재려고 둔다. 기록의 model이 "none"이라 진단 지표와
+    섞이지 않는다. Diagnoser 담당 파일과 겹치지 않게 진입점에 둔다.
+    """
+
+    model = "none"
+    method = "B"  # 검사 도구를 쓰지 않는다
+
+    def diagnose(self, brief: RoundBrief, tools: Toolbox) -> Diagnosis:
+        """빈 진단을 돌려준다."""
+        return Diagnosis(brief.round_id, self.model, self.method, [])
+
+
+# match에 꽂을 진단기. 인자는 명령줄 인자다. 새 Diagnoser는 여기에 한 줄 추가한다.
+DIAGNOSER_IMPLS: dict[str, Callable[[argparse.Namespace], Diagnoser]] = {
+    "none": lambda _args: NoDiagnosis(),
+}
 
 
 def make_lab(impl: str, config: str | Path) -> Lab:
@@ -120,10 +150,16 @@ def cmd_run(args) -> int:
 
     rows = summarize(records)
     print(format_table(rows))
-    html_path = records_path.with_name(records_path.stem.replace("rounds-", "report-") + ".html")
-    write_private_text(html_path, render_html(records, rows))
+    html_path = _save_report(records_path, records, rows)
     print(f"\n기록: {records_path}\n결과 화면: {html_path}")
     return 1 if stopped else 0
+
+
+def _save_report(records_path: Path, records: list[dict], rows: list[dict]) -> Path:
+    """라운드 기록 옆에 report-*.html 결과 화면을 쓰고 그 경로를 돌려준다."""
+    html_path = records_path.with_name(records_path.stem.replace("rounds-", "report-") + ".html")
+    write_private_text(html_path, render_html(records, rows))
+    return html_path
 
 
 def cmd_report(args) -> int:
@@ -284,6 +320,54 @@ def cmd_breaker_propose(args) -> int:
     return 0
 
 
+def cmd_match(args) -> int:
+    """Breaker 제안을 심판으로 돌린다(Breaker 대결).
+
+    라운드마다 Breaker가 GLM으로 시나리오를 내고, 심판이 검증, 주입, 재현
+    확인, 진단, 채점, 정상화 확인을 한다. 진단기는 --diagnoser로 고른다.
+    Breaker가 제안에 실패하거나 정상화가 확인되지 않으면 그 자리에서
+    끝내고 1을 돌려준다.
+    """
+    if args.rounds < 1:
+        print("--rounds는 1 이상이어야 함", file=sys.stderr)
+        return 1
+    info = LabInfo.load(args.lab)
+    url_err = lab_url_error(args.target, info)
+    if url_err:
+        print(f"대상 URL이 잘못됨: {url_err}", file=sys.stderr)
+        return 1
+    out = ensure_private_dir(args.out)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    records_path = out / f"rounds-match-{args.impl}-{stamp}.jsonl"
+    journal = out / f"breaker-{stamp}.jsonl"
+    complete = OpencodeComplete(
+        binary=args.opencode, root=ROOT, config=DEFAULT_SANDBOX, model=args.model
+    )
+    breaker = LLMBreaker(
+        complete, info, args.target, max_faults=args.max_faults, record=CallJournal(journal)
+    )
+    lab = make_lab(args.impl, args.lab)
+    referee = Referee(
+        lab,
+        DIAGNOSER_IMPLS[args.diagnoser](args),
+        info,
+        records_path=records_path,
+        runner=lab if args.impl in PROBES_FROM_LAB else None,
+    )
+    records = referee.run_match(breaker, args.rounds)
+
+    rows = summarize(records)
+    print(format_table(rows))
+    stats = summarize_breaker(records)
+    print("\n" + format_breaker_summary(stats))
+    html_path = _save_report(records_path, records, rows)
+    print(f"\n기록: {records_path}\nBreaker 호출 기록: {journal}\n결과 화면: {html_path}")
+    stopped = any(r["reset_verified"] is False for r in records)
+    if stopped:
+        print("정상화 미확인: 나머지 라운드를 중단함", file=sys.stderr)
+    return 1 if stopped or stats["proposal_failed"] else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """명령줄 해석기를 만든다. 기록 폴더 기본값은 저장소 밖이다(#21)."""
     runs = str(default_runs_dir())
@@ -322,22 +406,40 @@ def build_parser() -> argparse.ArgumentParser:
         "breaker-propose", help="GLM으로 시나리오를 제안받아 검사 통과율을 셈(실험망 미사용)"
     )
     p.add_argument("--n", type=int, default=1, help="제안을 받을 횟수")
-    p.add_argument("--target", default="http://shop.lab/", help="대상 URL")
-    p.add_argument("--max-faults", type=int, default=1, help="실험망이 한 라운드에 켤 장애 수")
     p.add_argument("--history", help="지난 라운드 기록 JSONL(없으면 첫 제안)")
-    p.add_argument("--model", default=DEFAULT_MODEL, help="opencode 모델 ID")
-    p.add_argument(
-        "--opencode",
-        default=os.environ.get("NETRUNNER_OPENCODE", "opencode"),
-        help="opencode 실행 파일 경로(기본: NETRUNNER_OPENCODE 또는 PATH의 opencode)",
-    )
+    _add_breaker_args(p)
     p.add_argument(
         "--out",
         default=runs,
         help="호출 기록과 채택 시나리오 폴더(기본: ~/netrunner-private/runs)",
     )
     p.set_defaults(func=cmd_breaker_propose)
+
+    p = sub.add_parser("match", help="Breaker 제안을 심판과 실험망으로 돌려 대결")
+    p.add_argument("--rounds", type=int, default=3, help="대결 라운드 수")
+    p.add_argument("--impl", choices=sorted(LAB_IMPLS), default="docker", help="실험망 구현")
+    p.add_argument(
+        "--diagnoser",
+        choices=sorted(DIAGNOSER_IMPLS),
+        default="none",
+        help="진단기(기본 none: 원인을 답하지 않는 자리표시)",
+    )
+    _add_breaker_args(p)
+    p.add_argument("--out", default=runs, help="기록 폴더(기본: ~/netrunner-private/runs)")
+    p.set_defaults(func=cmd_match)
     return ap
+
+
+def _add_breaker_args(p: argparse.ArgumentParser) -> None:
+    """Breaker 제안에 쓰는 공통 인자: 대상, 동시 장애 수, GLM 모델과 실행 파일."""
+    p.add_argument("--target", default="http://shop.lab/", help="대상 URL")
+    p.add_argument("--max-faults", type=int, default=1, help="실험망이 한 라운드에 켤 장애 수")
+    p.add_argument("--model", default=DEFAULT_MODEL, help="opencode 모델 ID")
+    p.add_argument(
+        "--opencode",
+        default=os.environ.get("NETRUNNER_OPENCODE", "opencode"),
+        help="opencode 실행 파일 경로(기본: NETRUNNER_OPENCODE 또는 PATH의 opencode)",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
