@@ -6,19 +6,10 @@
       "permission": {
         "*": "deny",
         "external_directory": "deny",
-        "read": {"*": "deny", "**": "allow", "*.env": "deny", "*.env.*": "deny"},
-        "glob": {"*": "deny", "**": "allow"},
-        "grep": {"*": "deny", "**": "allow"},
-        "edit": {
-          "*": "deny",
-          "netrunner/**": "allow",
-          "tests/**": "allow",
-          "lab/**": "allow",
-          "labs/**": "allow",
-          "fixtures/**": "allow",
-          "docs/**": "allow",
-          "compose.yaml": "allow"
-        },
+        "read": "deny",
+        "glob": "deny",
+        "grep": "deny",
+        "edit": "deny",
         "shell": "deny",
         "webfetch": "deny",
         "websearch": "deny",
