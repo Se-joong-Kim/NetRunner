@@ -32,3 +32,27 @@ def test_breaker_agent_grants_no_tool_permission():
 
 def test_unlisted_tools_are_denied_by_default():
     assert _permission()["*"] == "deny"
+
+
+# opencode 2.3.0 내장 에이전트가 쓰는 권한 이름. 여기 없는 이름은 설정이 조용히 무시할 수 있다.
+KNOWN_ACTIONS = frozenset(
+    {
+        "*",
+        "browser",
+        "edit",
+        "external_directory",
+        "glob",
+        "grep",
+        "question",
+        "read",
+        "shell",
+        "skill",
+        "subagent",
+        "webfetch",
+        "websearch",
+    }
+)
+
+
+def test_every_permission_key_is_a_known_opencode_action():
+    assert set(_permission()) <= KNOWN_ACTIONS
