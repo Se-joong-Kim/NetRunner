@@ -32,3 +32,29 @@ def test_breaker_agent_grants_no_tool_permission():
 
 def test_unlisted_tools_are_denied_by_default():
     assert _permission()["*"] == "deny"
+
+
+# opencode 2.3.0이 권한 규칙 키로 받는 이름 가운데 확인한 목록이다. 전체 목록은 아니다.
+# 여기 없는 이름을 쓰면 설정이 조용히 무시될 수 있으니, 추가하기 전에 바이너리로 확인한다.
+KNOWN_ACTIONS = frozenset(
+    {
+        "*",
+        "browser",
+        "doom_loop",
+        "edit",
+        "external_directory",
+        "glob",
+        "grep",
+        "question",
+        "read",
+        "shell",
+        "skill",
+        "subagent",
+        "webfetch",
+        "websearch",
+    }
+)
+
+
+def test_every_permission_key_is_a_known_opencode_action():
+    assert set(_permission()) <= KNOWN_ACTIONS

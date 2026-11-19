@@ -11,48 +11,18 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from .breaker import CompletionError
+from .child_env import child_environment
 
 DEFAULT_MODEL = "opencode-go/glm-5.3-flash"
 DEFAULT_AGENT = "netrunner"
 DEFAULT_TIMEOUT = 120.0
 
-# opencode 자식 프로세스가 받는 환경변수 허용 목록. 목록에 없는 변수(토큰, 키,
-# 비밀번호 등)는 넘기지 않는다. opencode 인증은 HOME 아래 auth.json에서 읽는다.
-_ENV_NAMES = frozenset(
-    {
-        "PATH",
-        "HOME",
-        "USER",
-        "LOGNAME",
-        "SHELL",
-        "TMPDIR",
-        "TERM",
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "NO_PROXY",
-        "http_proxy",
-        "https_proxy",
-        "no_proxy",
-        "SSL_CERT_FILE",
-        "SSL_CERT_DIR",
-        "NODE_EXTRA_CA_CERTS",
-    }
-)
-_ENV_PREFIXES = ("LC_", "XDG_")
-
 Runner = Callable[..., subprocess.CompletedProcess]
-
-
-def child_environment(environ: Mapping[str, str], config: Path) -> dict[str, str]:
-    """opencode에 넘길 환경변수. 허용 목록만 복사하고 설정 경로를 더한다."""
-    kept = {k: v for k, v in environ.items() if k in _ENV_NAMES or k.startswith(_ENV_PREFIXES)}
-    kept["OPENCODE_CONFIG"] = str(config.resolve())
-    return kept
 
 
 @dataclass(frozen=True)
@@ -81,7 +51,7 @@ class OpencodeComplete:
             "json",
             "--archived",
         ]
-        env = child_environment(os.environ, self.config)
+        env = child_environment(os.environ, {"OPENCODE_CONFIG": str(self.config.resolve())})
         try:
             proc = self.run(
                 argv,

@@ -18,10 +18,11 @@ uv run pytest                                   # 전체 테스트 (실험망 �
 uv run pytest tests/test_judge.py -k <이름>      # 단일 테스트
 NETRUNNER_INTEGRATION=1 uv run pytest           # Docker 실험망 테스트까지 (실험망이 떠 있어야 함)
 uv run netrunner validate <시나리오.json>...     # Breaker 출력이 계약을 지키는지 검사
-uv run netrunner demo                           # 고정 입력 2라운드를 MockLab으로 실행 → runs/ (git 제외). run --impl mock과 같음
-uv run netrunner run --impl docker --repeat 3   # 같은 고정 세트를 실제 Docker 실험망에서 심판으로 반복
-uv run netrunner lab-check --repeat 3           # 심판 없이 실험망 단계만 확인 (AI 진단·채점 없음)
-uv run netrunner report <rounds.jsonl> --html out.html
+uv run netrunner demo --out ~/netrunner-private/runs   # 고정 입력 2라운드를 MockLab으로 실행. 정답이 든 기록이므로 저장소 밖에 둔다
+uv run netrunner run --impl docker --repeat 3 --out ~/netrunner-private/runs   # 같은 고정 세트를 실제 Docker 실험망에서 심판으로 반복
+uv run netrunner lab-check --repeat 3 --out ~/netrunner-private/runs           # 심판 없이 실험망 단계만 확인 (AI 진단·채점 없음)
+uv run netrunner report ~/netrunner-private/runs/<rounds.jsonl> --html ~/netrunner-private/report.html
+uv run netrunner breaker-propose --n 3 --out ~/netrunner-private/runs --opencode <opencode 경로>   # Breaker 제안을 실험망 없이 n번 받아 검사 통과율을 셈
 ```
 
 Docker 실험망은 저장소 루트에서 띄우고 내린다. 이미지를 먼저 빌드해야 한다.
@@ -77,20 +78,22 @@ Breaker, Diagnoser, 실험망, 심판은 각자 일에 필요한 입력과 파�
 
 ### opencode 권한과 샌드박스
 
-opencode는 GLM 호출(Breaker)과 개발 에이전트에 쓴다. 권한은 기본 거부로 두고 필요한 것만 연다. 역할별 경로 규칙은 위 "역할별 권한"을 따른다.
+opencode는 GLM 호출(Breaker)과 개발 에이전트에 쓴다. 원칙은 허용 목록(whitelist)이다. 환경변수, 도구 권한, 샌드박스 모두 목록에 없는 것은 거부하고, 필요한 것만 목록에 넣는다. 역할별 경로 규칙은 위 "역할별 권한"을 따른다.
 
 - Breaker 에이전트(`netrunner`)는 도구를 쓰지 않는다. `config/opencode_sandbox.json`의 모든 권한을 `deny`로 둔다. 허용을 더하려면 이유를 PR 본문에 적고 `tests/test_sandbox_config.py`를 함께 고친다.
-- 실행은 `netrunner/glm_client.py` 한 곳에서만 한다: `opencode run --standalone --agent netrunner --format json --archived`. `--auto`(묻지 않고 승인)는 쓰지 않는다. 에이전트와 설정 경로를 다른 곳에서 바꾸지 않는다.
-- 자식 프로세스에는 환경변수 허용 목록만 넘긴다(`PATH`, `HOME`, 로캘, 프록시, 인증서 경로). 토큰, 키, 비밀번호 이름의 변수는 넘기지 않는다. 목록을 늘리려면 이유를 적는다.
-- 이 저장소의 기본 에이전트(build, plan)는 `opencode.json`으로 `ask`를 기본으로 한다. 외부 경로(`external_directory`), 웹 가져오기와 검색, 브라우저는 `deny`다. `.env` 읽기도 `deny`다. 전역 설정(`~/.config/opencode/`)에 권한을 풀어 두지 않는다.
+- 실행은 `netrunner/glm_client.py` 한 곳에서만 한다: `opencode run --standalone --agent netrunner -m <모델> --format json --archived`. `--auto`, `--yolo`, `--dangerously-skip-permissions`(모두 묻지 않고 승인)는 쓰지 않는다. 에이전트와 설정 경로를 다른 곳에서 바꾸지 않는다.
+- 자식 프로세스(opencode, Docker Compose, HTTP 실험망 도구)에는 허용 목록의 환경변수만 넘긴다. 목록과 비밀 표지는 `netrunner/child_env.py` 한 곳에만 둔다. CLAUDE.md에는 목록을 옮겨 적지 않는다. 목록을 늘리려면 이유를 PR 본문에 적는다.
+- 이 저장소의 기본 에이전트(build, plan)는 `opencode.json`으로 기본 거부(`*: deny`)다. 목록에 있는 것만 연다. 읽기, 검색, 편집, 셸은 `ask`(묻고 승인), 질문은 `allow`다. 정답 시나리오(`fixtures/**/*.scenario.json`)는 읽기를 거부하고, `runs/`와 `captures/`는 읽기, 검색, 편집을 거부한다. 외부 경로, 웹 가져오기와 검색, 브라우저, 스킬은 `deny`다. 전역 설정(`~/.config/opencode/`)에 권한을 풀어 두지 않는다.
 - 샌드박스가 실제로 막는지는 기록으로 확인한다. 도구 호출은 `~/.local/share/opencode/opencode.db`의 `session_message`에 남는다. 먼저 읽기를 허용한 임시 설정(저장소 밖)에서 같은 요청을 보내 호출 기록이 생기는지 대조군으로 확인하고, 실제 설정에서 기록이 없는지 본다. "거부합니다"라는 대답만으로는 증거가 아니다.
-- 인증과 기록 파일(`~/.local/share/opencode/auth.json`, `service.json`, `opencode.db`, `runs/`)은 600으로 둔다. 키와 비밀번호 값은 출력하거나 저장소에 넣지 않는다. 확인이 필요하면 이름과 권한만 본다.
+- 인증과 기록 파일(`~/.local/share/opencode/auth.json`, `~/.config/opencode/service.json`, `~/.local/share/opencode/opencode.db`와 `-wal`·`-shm`, `~/netrunner-private/`의 파일)은 600으로 둔다. 폴더는 `~/netrunner-private/`와 그 안 `runs/`만 700이다. 코드는 파일 권한을 설정하지 않으므로 사람이 `umask 077` 또는 `chmod`로 맞춘다(셸 기본 umask는 0002라 새 파일은 664가 된다). 키와 비밀번호 값은 출력하거나 저장소에 넣지 않는다. 확인이 필요하면 이름과 권한만 본다.
 - 토큰이나 키를 검색하지 않는다. 환경변수는 이름 목록만 보고 값은 보지 않는다.
-- 세션 데이터베이스와 `runs/`에는 정답 시나리오(장애, `note`)가 평문으로 남는다. 보존 기간과 정리 방법은 아직 정하지 않았다. 정할 때까지 이 경로를 공유하거나 커밋하지 않는다.
+- 정답이 든 기록(라운드 기록, Breaker 호출 기록, 제안 시나리오, `lab-check` 기록, `report`의 HTML)은 저장소 밖 `~/netrunner-private/`(700)에 둔다. 실행할 때 `--out ~/netrunner-private/runs`를 주고, `report`는 `--html ~/netrunner-private/...`로 쓴다. 저장소의 `runs/`에 두지 않는다. 이 폴더는 opencode 에이전트의 `external_directory` 거부로 에이전트가 읽지 못한다. 코드 기본값은 아직 저장소 `runs/`다(`demo`, `run`, `lab-check`, `breaker-propose`, `http_demo`). 기본값을 바꾸는 일은 파일 담당자와 정한다.
+- 실험망 캡처(`captures/`의 pcap)는 주입 중 DNS와 TCP 흔적을 담아 정답 단서가 될 수 있다. 지금은 저장소의 `captures/`(root 소유, git 제외)에 쌓인다. 옮기는 결정은 실험망 담당이 한다.
+- opencode 세션 데이터베이스(`~/.local/share/opencode/opencode.db`)에는 정답 시나리오가 평문으로 남는다. opencode 서비스가 이 파일을 쓰는 중이라 옮기지 않는다. 정리(보존 기간, 세션 삭제, 서비스 중지)는 사용자가 정한다. 정할 때까지 이 파일을 공유하거나 커밋하지 않는다.
 - 실험망 컨테이너는 `privileged`, `network_mode: host`, 장치 마운트, Docker 소켓 마운트를 쓰지 않는다. `NET_ADMIN`과 `NET_RAW`는 필요한 컨테이너에만 준다. 쓰지 않을 때는 `docker compose down`으로 내린다.
 - 이 계정은 `docker` 그룹이라 Docker 데몬 접근이 root 권한과 같다. 모델 에이전트(opencode)가 도는 경로에서는 Docker를 부르지 않는다. 실험망 코드는 사람이 실행한 명령에서만 Docker를 부른다.
 - `--opencode`와 `NETRUNNER_OPENCODE`로 고르는 실행 파일 경로는 신뢰하는 것만 쓴다. PATH에서 찾은 실행 파일도 같은 기준이다.
-- `@opencode/cli`는 로컬 설치(`.venv-opencode/`, git 제외)에 있고 그 안의 `package-lock.json`으로 버전을 잠근다. 저장소에는 잠금 파일이 없으므로 팀원은 같은 버전을 직접 맞춘다. 버전을 올릴 때는 `npm audit signatures`로 서명을 확인하고, 설치 스크립트(`postinstall.mjs`)를 검토한다.
+- `@opencode/cli`는 로컬 설치(`.venv-opencode/`, git 제외)에 있고 그 안의 `package-lock.json`으로 버전을 잠근다. npm 잠금 파일은 저장소에 없으므로(`uv.lock`은 Python 의존성용이다) 팀원은 같은 버전을 직접 맞춘다. 버전을 올릴 때는 `npm audit signatures`로 서명을 확인하고, 설치 스크립트(`postinstall.mjs`)를 검토한다.
 
 ## 작업 기준
 
@@ -141,3 +144,9 @@ opencode는 GLM 호출(Breaker)과 개발 에이전트에 쓴다. 권한은 기�
 - **강제 푸시와 브랜치 삭제 금지**: 기록을 바꾸는 강제 푸시와 브랜치 삭제는 하지 않는다.
 - **에이전트의 병합과 삭제**: Claude 같은 에이전트는 PR 병합과 브랜치 삭제를 사용자가 시킬 때만 한다.
 - **CLAUDE.md 수정**: 팀원 누구나 고칠 수 있다. 모두가 관리자이므로 고쳐진 내용은 그대로 따른다.
+- **후속 작업과 결정 항목은 이슈로 남긴다**: 이 대화나 메모리에만 두지 않는다. 다음 경우에 에이전트가 이슈를 만든다.
+  - 다른 담당자의 파일이나 결정이 필요한 문제(예: 실험망 네트워크 설정, 검사 함수의 오류 문구)
+  - 사용자가 나중에 이어서 하기로 한 작업(예: 제안 프롬프트 보강, 목표 미달 항목)
+  - 외부 조건을 기다리는 작업(예: 공유 자원의 정리 정책)
+- 이슈 본문에는 현상, 재현 방법(명령과 기록 위치, 정답 값은 빼고), 근거, 영향, 제안하는 해결, 결정할 담당(README 표 기준), 기다리는 작업을 적는다. 정답 파일과 기록 파일의 내용은 붙이지 않는다.
+- 제목은 `담당 모듈: 현상`으로 짧게 쓴다. 만들기 전에 `gh issue list --search`로 같은 내용의 열린 이슈가 있는지 확인하고, 있으면 새로 만들지 않고 댓글을 단다.

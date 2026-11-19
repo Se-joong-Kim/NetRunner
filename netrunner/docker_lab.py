@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import subprocess
 import time
@@ -10,6 +11,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .child_env import child_environment
 from .contracts import FaultSpec, LabResult, Scenario, read_json
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,7 +29,13 @@ class DockerLab:
         cmd = ["docker", "compose", "-f", str(ROOT / "compose.yaml"), "exec", "-T", service, *args]
         start = time.monotonic()
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            p = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=child_environment(os.environ),
+            )
             return {
                 "command": cmd,
                 "exit_code": p.returncode,

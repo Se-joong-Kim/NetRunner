@@ -404,7 +404,8 @@ def test_more_faults_than_the_lab_can_inject_is_rejected_and_counted():
     b = LLMBreaker(model, ALL_LAB, TARGET, max_faults=1)
     assert b.propose([]).faults[0].id == "D2"
     assert b.stats.over_limit == 1 and b.stats.invalid == 0
-    assert "동시 장애 2개" in model.prompts[1]
+    assert "장애 2개를 냈다" in model.prompts[1]
+    assert "한 개만 고른다" in model.prompts[1]
 
 
 def test_fault_hidden_by_an_earlier_blocking_fault_is_rejected():
@@ -490,7 +491,7 @@ def test_exhaustion_does_not_apply_when_two_faults_can_be_combined():
 def test_prompt_states_the_fault_limit_of_the_lab():
     one = fake_model(as_text(GOOD))
     LLMBreaker(one, LAB, TARGET, max_faults=1).propose([])
-    assert "장애는 1~1개" in one.prompts[0]
+    assert "장애는 정확히 1개만 고른다" in one.prompts[0]
     many = fake_model(as_text(GOOD))
     LLMBreaker(many, LAB, TARGET).propose([])
     assert "장애는 1~3개" in many.prompts[0]

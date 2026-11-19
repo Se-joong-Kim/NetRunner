@@ -126,6 +126,13 @@ def _strategy_lines(hints: Hints) -> list[str]:
     return lines
 
 
+def _fault_count_rule(max_faults: int) -> str:
+    """장애 개수 규칙 한 줄. 한도가 1이면 '1~1개'가 아니라 '정확히 1개'로 쓴다."""
+    if max_faults == 1:
+        return "- 장애는 정확히 1개만 고른다. 아래 목록의 ID만 쓴다."
+    return f"- 장애는 1~{max_faults}개. 아래 목록의 ID만 쓴다."
+
+
 def build_prompt(
     history: list[BreakerFeedback],
     target_url: str,
@@ -154,11 +161,15 @@ def build_prompt(
             "장애를 골라 조합하고, 원인이 드러나지 않는 사용자 불만 한 문장을 쓴다.",
             "",
             "## 규칙",
-            f"- 장애는 1~{max_faults}개. 아래 목록의 ID만 쓴다.",
+            _fault_count_rule(max_faults),
             f"- 함께 걸 수 없는 조합: {conflicts}",
             f"- 대상 URL: {target_url} (도메인 {target.domain}, 포트 {target.port})",
             f"- 증상 문장은 {MAX_COMPLAINT_LEN}자 이내. 다음 단어를 쓰지 않는다: "
             + ", ".join(CLUE_WORDS),
+            "- 증상 문장에 프로토콜과 URL 표기(http, https, ://)를 쓰지 않는다."
+            " 대상은 '사이트', '쇼핑몰'처럼 부른다.",
+            '  나쁜 예: "http://shop.lab/ 에 접속이 안 된다". '
+            '좋은 예: "shop.lab 쇼핑몰 사이트에 들어가지 않는다".',
             "- 주입할 수 없는 주소(실험망 호스트와 정상 서버)는 ip로 쓰지 않는다: "
             + ", ".join(sorted(lab_refused_addresses(lab))),
             "- 진단이 틀렸던 장애(cause_wrong, stage_wrong, missed) 가운데 장애 목록에 남은 것을",
