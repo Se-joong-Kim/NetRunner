@@ -105,6 +105,7 @@ uv run ruff format
 저장소: `Se-joong-Kim/NetRunner`, 기본 브랜치 `main`. PR은 쓰지 않는다. 팀원마다 자기 담당 브랜치 하나에서 작업하고, 작업을 마치면 `main`에 직접 푸시한다.
 
 - **작업 순서**: 작업을 시작하기 전에 `git fetch origin`으로 `main`을 확인하고, 담당 브랜치를 `main`에 맞춘다(뒤처졌으면 `main`을 가져와 합친다). 담당 브랜치에서 작업하고 커밋한 뒤 담당 브랜치를 푸시한다. 그다음 `main`에 같은 내용을 합쳐 `main`에 푸시한다.
+- **작업 전 확인**: 작업을 시작하기 전과 `main`에 올리기 전에 다음을 확인한다. (1) `git fetch origin` 후 `main`과 원격 브랜치 상태(`git branch -r`, `git log origin/main -5`). (2) 열린 PR(`gh pr list`)과 PR의 리뷰·댓글(`gh api repos/Se-joong-Kim/NetRunner/pulls/<번호>/reviews`, `.../issues/<번호>/comments`), 체크 결과(`gh pr checks <번호>`, 체크가 있을 때만). (3) 열린 이슈(`gh issue list`)와 이슈 댓글. (4) 다른 담당자가 같은 파일을 고치는지. 확인 결과가 작업에 영향을 주면 먼저 알리고 조율한다. 확인은 현재 `gh` 계정으로 한다. 계정 전환은 사용자가 요청할 때만 한다.
 - **브랜치**: 각자 담당 브랜치에서만 작업한다. 작업마다 새 브랜치(번호나 주제를 붙인 이름 포함)를 만들지 않는다. 한 커밋에는 한 주제만 담고, 담당 모듈과 무관한 변경은 섞지 않는다. 오래 두지 말고 짧게 끝내 `main`에 올린다.
 - **커밋 메시지**: 무엇을, 왜 바꿨는지와 확인 방법을 적는다.
 - **계약 변경은 합의 후**: `docs/interfaces.md`, `contracts.py`, `faults.py`를 바꾸는 작업은 영향을 받는 담당자의 승인을 받은 뒤 `main`에 올린다. 담당자는 README 표를 따른다.
