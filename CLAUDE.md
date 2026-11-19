@@ -63,7 +63,7 @@ uv run ruff format
 - Breaker가 낸 시나리오는 `origin`을 항상 `breaker`로 바꿔 기록하고, 고정 세트(`fixed`) 라운드는 Breaker의 입력 기록에서 뺀다.
 - 거부된 제안은 실험망을 건드리지 않는다.
 - `LLMBreaker`의 중복 판정은 채점이 끝난 유효 라운드(`valid=True`)의 장애 조합만 본다. 검증에서 거부된 라운드는 넣지 않아, 증상만 고친 재제안을 막지 않는다.
-- `Referee.run_match`는 Breaker가 `BreakerError`를 내면 매치를 중단한다. 이 처리 방식은 심판 담당과 아직 정하지 않았다. 바꾸기 전에 합의한다.
+- `Referee.run_match`는 Breaker가 `BreakerError`를 내면 `proposal_failed`를 기록하고 매치를 종료한다. 완료한 라운드와 실패 기록을 함께 반환하며, 제안 실패는 진단 지표에서 제외한다.
 
 ## 작업 기준
 
