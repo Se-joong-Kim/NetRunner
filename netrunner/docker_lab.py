@@ -135,7 +135,7 @@ class DockerLab:
                     and isinstance(domain, str)
                     and domain in self.config["domains"]
                     and address in ipaddress.ip_network(self.config["subnet"])
-                    and str(address) not in self.hosts.values()
+                    and str(address) != self.config["web_ip"]
                 )
             except (ValueError, TypeError):
                 allowed = False
