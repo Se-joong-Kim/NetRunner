@@ -18,7 +18,7 @@ from .breaker import BreakerError, LLMBreaker, ProposalStats
 from .breaker_log import CallJournal
 from .breaker_strategy import signature
 from .contracts import BreakerFeedback, Diagnosis, RoundBrief, Scenario, read_json
-from .diagnoser import Diagnoser, ReplayDiagnoser
+from .diagnoser import Diagnoser, GlmDiagnoser, ReplayDiagnoser
 from .docker_lab import DockerLab
 from .glm_client import DEFAULT_MODEL, OpencodeComplete
 from .lab import Lab, MockLab, ReplayRunner
@@ -84,11 +84,20 @@ class NoDiagnosis:
 
 
 # match와 run에 꽂을 진단기. 인자는 명령줄 인자다. 새 Diagnoser는 여기에 한 줄 추가한다.
+GLM_C = "glm-c"
 DIAGNOSER_IMPLS: dict[str, Callable[[argparse.Namespace], Diagnoser]] = {
     "none": lambda _args: NoDiagnosis(),
+    GLM_C: lambda args: GlmDiagnoser.from_opencode(args.opencode, model=args.model),
 }
 # run에서 저장된 진단을 재생하는 모드의 이름. 다른 진단기와 섞지 않는다.
 REPLAY = "replay"
+
+
+def _diagnoser_needs_runner(names: list[str], impl: str) -> bool:
+    if GLM_C not in names or impl in PROBES_FROM_LAB:
+        return False
+    print(f"{GLM_C}: {impl} 실험망에 검사 실행기가 연결되지 않았습니다.", file=sys.stderr)
+    return True
 
 
 def make_lab(impl: str, config: str | Path) -> Lab:
@@ -152,6 +161,8 @@ def cmd_run(args) -> int:
     names = list(dict.fromkeys(args.diagnoser or [REPLAY]))
     if REPLAY in names and len(names) > 1:
         print("replay(저장된 진단 재생)는 다른 진단기와 함께 쓸 수 없음", file=sys.stderr)
+        return 1
+    if _diagnoser_needs_runner(names, args.impl):
         return 1
     d = Path(args.dir)
     scenario_files = sorted(d.glob("*.scenario.json"))
@@ -363,6 +374,8 @@ def cmd_match(args) -> int:
     """
     if args.rounds < 1:
         print("--rounds는 1 이상이어야 함", file=sys.stderr)
+        return 1
+    if _diagnoser_needs_runner([args.diagnoser], args.impl):
         return 1
     info = LabInfo.load(args.lab)
     url_err = lab_url_error(args.target, info)
