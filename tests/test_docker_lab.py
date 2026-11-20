@@ -11,6 +11,7 @@ from netrunner.contracts import FaultSpec, LabResult, Scenario, read_json
 from netrunner.diagnoser import ReplayDiagnoser
 from netrunner.docker_lab import ROOT, DockerLab
 from netrunner.referee import Referee
+from netrunner.tools import missing_parts
 from netrunner.validate import LabInfo
 
 
@@ -64,6 +65,62 @@ def test_timeout_preserves_partial_output(monkeypatch):
     assert result["stdout"] == "partial output" and result["stderr"] == "partial error"
 
 
+def test_probe_commands_and_failures(monkeypatch):
+    lab = DockerLab()
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append(args)
+        if args[1] == "dig":
+            return {
+                "exit_code": 0,
+                "stdout": "ANSWER: 1\nQuery time: 3 msec",
+                "stderr": "",
+                "elapsed_ms": 4,
+            }
+        return {
+            "exit_code": 7,
+            "stdout": (
+                "http_code=000\ntime_namelookup=0\ntime_connect=0\ntime_appconnect=0\n"
+                "time_starttransfer=0\ntime_total=0"
+            ),
+            "stderr": "Connection refused",
+            "elapsed_ms": 5,
+        }
+
+    monkeypatch.setattr(lab, "_run", run)
+    dig = lab.run_probe("dig", {"domain": "shop.lab", "server": "alt_dns"})
+    curl = lab.run_probe("curl", {"url": "http://shop.lab/", "resolve_ip": "10.20.0.10"})
+    assert dig.ok and not missing_parts("dig", dig.output)
+    assert "@10.20.0.54" in calls[0]
+    assert curl.ok and not missing_parts("curl", curl.output)
+    assert "Connection refused" in curl.output and "-v" in calls[1]
+    assert "shop.lab:80:10.20.0.10" in calls[1]
+    assert not lab.run_probe("curl", {"url": "http://example.com/"}).ok
+    assert not lab.run_probe("unknown", {}).ok
+    monkeypatch.setattr(
+        lab,
+        "_run",
+        lambda *a, **kw: {"exit_code": None, "stdout": "", "stderr": "", "elapsed_ms": 1},
+    )
+    assert not lab.run_probe("curl", {"url": "http://shop.lab/"}).ok
+
+
+def test_capture_probe_returns_record(monkeypatch):
+    lab = DockerLab()
+    monkeypatch.setattr(
+        lab,
+        "_capture",
+        lambda url: (
+            {"exit_code": 0, "output": "#1 packet", "elapsed_ms": 2, "packets": 1},
+            "/private/test.pcap",
+        ),
+    )
+    result = lab.run_probe("capture", {"url": "http://shop.lab/"})
+    assert result.ok and result.packets == 1 and result.file == "/private/test.pcap"
+    assert not missing_parts("capture", result.output)
+
+
 def test_dns_waits_for_expected_answers(monkeypatch):
     lab = DockerLab()
     monkeypatch.setattr(lab, "_run", lambda *a, **kw: {"exit_code": 0, "stderr": ""})
@@ -94,7 +151,8 @@ def test_capture_numbers_packets_and_always_cleans_up(monkeypatch, tmp_path):
     assert result["packets"] == 2
     assert result["output"] == "#1 packet one\n#2 packet two\n"
     assert Path(path).read_bytes() == b"pcap"
-    assert Path(path).stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert Path(path).stat().st_mode & 0o777 == 0o600
     assert ("sh", "/stop-capture.sh") in calls
     assert calls[-1][0:2] == ("rm", "-f")
 
@@ -136,6 +194,20 @@ def test_lab_check_recovers_dirty_start(monkeypatch, tmp_path):
     assert cmd_lab_check(args) == 0
     steps = json.loads(next(tmp_path.glob("*.jsonl")).read_text())["steps"]
     assert not steps["health_check_initial"]["ok"] and steps["health_check"]["ok"]
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+def test_real_probe_outputs():
+    lab = DockerLab()
+    for tool, args in (
+        ("dig", {"domain": "shop.lab", "server": "dns"}),
+        ("dig", {"domain": "shop.lab", "server": "alt_dns"}),
+        ("curl", {"url": "http://shop.lab/"}),
+        ("capture", {"url": "http://shop.lab/"}),
+    ):
+        result = lab.run_probe(tool, args)
+        assert result.ok, result.error
+        assert not missing_parts(tool, result.output)
 
 
 @pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
