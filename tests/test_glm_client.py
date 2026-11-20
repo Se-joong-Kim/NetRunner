@@ -100,6 +100,24 @@ def test_nonzero_exit_raises_with_stderr():
         _complete(run)("x")
 
 
+def test_nonzero_exit_reports_stdout_error_event_when_stderr_is_empty():
+    # #52: opencode 2.3.0은 실패 이유를 stdout의 error 이벤트로 낸다.
+    error = {
+        "type": "provider.no-route",
+        "message": "Model unavailable: opencode-go/glm-5.3-flash",
+    }
+    stdout = json.dumps({"type": "error", "error": error})
+    run = FakeRun(stdout=stdout, returncode=1, stderr="")
+    with pytest.raises(CompletionError, match="종료 코드 1: 모델 오류.*Model unavailable"):
+        _complete(run)("x")
+
+
+def test_nonzero_exit_uses_stderr_when_stdout_has_no_error_event():
+    run = FakeRun(stdout=_text_event("일부"), returncode=1, stderr="인증 실패")
+    with pytest.raises(CompletionError, match="종료 코드 1: 인증 실패"):
+        _complete(run)("x")
+
+
 def test_timeout_raises_completion_error():
     run = FakeRun(exc=subprocess.TimeoutExpired(cmd="opencode", timeout=5))
     with pytest.raises(CompletionError, match="시간 초과"):
@@ -125,6 +143,11 @@ def test_empty_response_raises_completion_error():
 
 def test_non_json_noise_lines_are_ignored():
     stdout = "warning: something\n" + _text_event("답")
+    assert extract_text(stdout) == "답"
+
+
+def test_json_lines_that_are_not_objects_are_ignored():
+    stdout = "123\n[1, 2]\n" + _text_event("답")
     assert extract_text(stdout) == "답"
 
 

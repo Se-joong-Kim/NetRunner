@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -68,7 +68,7 @@ class OpencodeComplete:
         except OSError as e:
             raise CompletionError(f"opencode 실행 실패: {e}") from e
         if proc.returncode != 0:
-            detail = (proc.stderr or "").strip()[:300]
+            detail = _failure_detail(proc.stdout or "", proc.stderr or "")[:300]
             raise CompletionError(f"opencode 종료 코드 {proc.returncode}: {detail}")
         return extract_text(proc.stdout)
 
@@ -76,21 +76,44 @@ class OpencodeComplete:
 def extract_text(stdout: str) -> str:
     """응답 문자열을 모은다. 입력은 --format json 출력(줄마다 이벤트 하나)이다.
 
-    이벤트가 error면 그 메시지로 CompletionError를 낸다. JSON이 아닌 줄은
-    무시한다. 응답이 비어 있으면 CompletionError다.
+    이벤트가 error면 그 메시지로 CompletionError를 낸다. JSON 객체가 아닌
+    줄은 무시한다. 응답이 비어 있으면 CompletionError다.
     """
     parts: list[str] = []
-    for line in stdout.splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for event in _events(stdout):
         kind = event.get("type")
         if kind == "error":
-            raise CompletionError(f"모델 오류: {event.get('error')}")
+            raise CompletionError(_error_text(event))
         if kind == "text":
             parts.append(str(event.get("part", {}).get("text", "")))
     text = "".join(parts).strip()
     if not text:
         raise CompletionError("모델 응답이 비어 있음")
     return text
+
+
+def _events(stdout: str) -> Iterator[dict]:
+    """--format json 출력의 JSON 객체 이벤트를 차례로 낸다."""
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            yield event
+
+
+def _error_text(event: dict) -> str:
+    return f"모델 오류: {event.get('error')}"
+
+
+def _failure_detail(stdout: str, stderr: str) -> str:
+    """종료 코드가 0이 아닐 때의 이유를 고른다.
+
+    opencode 2.3.0은 run --format json에서 실패 이유를 stdout의 error
+    이벤트로 낸다(#52). 그 이벤트가 있으면 그것을, 없으면 stderr를 쓴다.
+    """
+    for event in _events(stdout):
+        if event.get("type") == "error":
+            return _error_text(event)
+    return stderr.strip()
