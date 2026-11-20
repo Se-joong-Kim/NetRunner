@@ -2,23 +2,30 @@
 
 from __future__ import annotations
 
+import argparse
 from datetime import datetime
+from pathlib import Path
 
 from .contracts import Scenario, Status, read_json
 from .diagnoser import HttpDiagnoser
 from .http_lab import ROOT, HttpDockerLab
+from .records import default_runs_dir, ensure_private_dir, write_private_text
 from .referee import Referee
 from .report import render_html, summarize
 from .validate import LabInfo
 
 
-def main():
+def main(argv: list[str] | None = None) -> int:
     """실제 HTTP 실험망에서 심판 한 라운드를 실행하고 결과를 저장한다."""
+    parser = argparse.ArgumentParser(description="H1 진단과 채점 확인")
+    parser.add_argument("--out", type=Path, default=default_runs_dir())
+    args = parser.parse_args(argv)
+    output = ensure_private_dir(args.out)
     lab = HttpDockerLab()
     lab.start()
     scenario = Scenario.from_dict(read_json(ROOT / "fixtures/http/h1.scenario.json"))
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    records = ROOT / "runs" / f"http-{stamp}.jsonl"
+    records = output / f"http-{stamp}.jsonl"
     referee = Referee(
         lab,
         HttpDiagnoser(lab.probe),
@@ -35,7 +42,7 @@ def main():
     if record["invalid_reason"]:
         print(f"실패 이유: {record['invalid_reason']}")
     html = records.with_suffix(".html")
-    html.write_text(render_html([record], summarize([record])), encoding="utf-8")
+    write_private_text(html, render_html([record], summarize([record])))
     print(f"기록: {records}\n결과 화면: {html}")
     return 0 if record["status"] == Status.SCORED and record["reset_verified"] else 1
 
