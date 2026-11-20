@@ -26,7 +26,8 @@ python -m netrunner.http_demo
 ## 심판 연결과 근거
 
 `http_demo.py`는 기존 `Referee`를 사용해 검증, 정상 확인, 주입, 재현 확인, 진단,
-채점, 복구를 실행한다. 결과는 `runs/http-*.jsonl`, 결과 화면은 같은 이름의 HTML로 저장한다.
+채점, 복구를 실행한다. 기본 출력 폴더는 `~/netrunner-private/runs`다.
+JSONL과 HTML을 같은 폴더에 저장하며, 필요하면 `--out`으로 경로를 지정한다.
 원본 HTTP 응답(본문은 최대 4096바이트)은 client 컨테이너에서 수집하고
 `Probe`와 `probe:http-1` 근거 참조를 통해 심판에 전달한다.
 
