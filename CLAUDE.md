@@ -19,7 +19,8 @@ uv run pytest tests/test_judge.py -k <이름>      # 단일 테스트
 NETRUNNER_INTEGRATION=1 uv run pytest           # Docker 실험망 테스트까지 (실험망이 떠 있어야 함)
 uv run netrunner validate <시나리오.json>...     # Breaker 출력이 계약을 지키는지 검사
 uv run netrunner demo                           # 고정 입력 2라운드를 MockLab으로 실행. 기록은 기본값 ~/netrunner-private/runs(저장소 밖)
-uv run netrunner run --impl docker --repeat 3   # 같은 고정 세트를 실제 Docker 실험망에서 심판으로 반복
+uv run netrunner run --impl docker --repeat 3   # 같은 고정 세트를 실제 Docker 실험망에서 심판으로 반복(저장된 진단 재생)
+uv run netrunner run --dir fixtures/fixed_set --diagnoser <이름> --diagnoser <이름> --repeat 3   # 고정 세트를 진단기(방식)별로 반복해 방식별 지표
 uv run netrunner lab-check --repeat 3           # 심판 없이 실험망 단계만 확인 (AI 진단·채점 없음)
 uv run netrunner report ~/netrunner-private/runs/<rounds.jsonl> --html ~/netrunner-private/report.html
 uv run netrunner breaker-propose --n 3 --opencode <opencode 경로>   # Breaker 제안을 실험망 없이 n번 받아 검사 통과율을 셈
@@ -52,7 +53,7 @@ uv run ruff format
 - `breaker.py`의 `LLMBreaker`: 모델 호출 함수 `complete(prompt) -> str`을 인자로 받아 시나리오를 제안하고 검사한다. 호출 실패는 `CompletionError`로 올라오며 재시도 횟수에 센다. 진입점(`breaker-propose`, `match`)이 `glm_client.OpencodeComplete`로 `complete`를 만든다.
 - `breaker_prompt.py`: `LLMBreaker`가 쓸 프롬프트 문자열을 만든다. 외부 호출은 하지 않는다.
 - `docker_lab.py`: `Lab`의 실제 구현(Docker Compose 실험망, D2·T2). `__main__.py`의 `LAB_IMPLS`에 등록해 `run --impl`로 고른다.
-- `__main__.py`의 `DIAGNOSER_IMPLS`: `match`에 꽂을 진단기. 실제 Diagnoser가 생기면 여기에 한 줄 등록한다. 기본 `none`(`NoDiagnosis`)은 원인을 답하지 않는 자리표시라, Diagnoser 없이도 Breaker 제안의 검증 통과·재현·정상화를 잴 수 있다. 기록의 `model`이 `none`이라 진단 지표와 섞이지 않는다.
+- `__main__.py`의 `DIAGNOSER_IMPLS`: `match`와 `run --diagnoser`에 꽂을 진단기. 실제 Diagnoser가 생기면 여기에 한 줄 등록한다. 기본 `none`(`NoDiagnosis`)은 원인을 답하지 않는 자리표시라, Diagnoser 없이도 Breaker 제안의 검증 통과·재현·정상화를 잴 수 있다. 기록의 `model`이 `none`이라 진단 지표와 섞이지 않는다. `run`에 `--diagnoser`를 여러 번 주면 반복 → 시나리오 → 진단기 순서로 섞어 돌린다. 기본값 `replay`는 저장된 진단을 재생하는 모드라 다른 진단기와 섞지 않는다.
 - `tools.py`: Diagnoser가 쓰는 검사 도구 목록의 단일 출처(이름, 인자, 허용 값, LLM용 설명, 방식별 묶음).
 - `toolbox.py`: 심판이 라운드마다 만들어 Diagnoser에 넘기는 도구 창구. 인자·한도를 검사하고 실제 출력을 기록하며, 채점은 이 기록으로만 한다. 실험망 쪽은 `lab.py`의 `ProbeRunner.run_probe` 하나를 구현한다.
 - `faults.py`: 장애 16종의 단일 출처. 정답 라벨, 매개변수 범위, 관측 차단 여부, 근거 지지 판정용 신호를 가진다. 검증, 채점, 보고서가 모두 여기서 읽는다.
