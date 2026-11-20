@@ -23,10 +23,8 @@ services:
     image: netrunner-lab
     init: true
     command: [client]
-    # NET_ADMIN: 경로 설정, NET_RAW: tcpdump, DAC_OVERRIDE: 사용자 소유 captures/에 root로 쓰기
-    cap_add: [NET_ADMIN, NET_RAW, DAC_OVERRIDE]
-    volumes:
-      - ./captures:/captures
+    # NET_ADMIN: 경로 설정, NET_RAW: tcpdump
+    cap_add: [NET_ADMIN, NET_RAW]
     networks:
       client_net:
         ipv4_address: 10.21.0.2
@@ -52,8 +50,8 @@ services:
     <<: *hardened
     image: netrunner-lab
     command: [web]
-    # NET_BIND_SERVICE: 80번 포트, iptables 방화벽 규칙(T2)
-    cap_add: [NET_ADMIN, NET_BIND_SERVICE]
+    # NET_ADMIN: T2, NET_BIND_SERVICE: 80번, SETUID·SETGID: httpd 권한 강하
+    cap_add: [NET_ADMIN, NET_BIND_SERVICE, SETUID, SETGID]
     networks:
       server_net:
         ipv4_address: 10.20.0.10
