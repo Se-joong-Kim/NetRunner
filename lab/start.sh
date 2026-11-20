@@ -25,6 +25,6 @@ case "$1" in
     iptables -I INPUT -j NETRUNNER
     mkdir -p /www
     printf 'NetRunner lab\n' > /www/index.html
-    exec httpd -f -p 80 -h /www
+    exec httpd -f -p 80 -h /www -u nobody
     ;;
 esac

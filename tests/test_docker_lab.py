@@ -72,9 +72,16 @@ def test_dns_waits_for_expected_answers(monkeypatch):
     assert lab._set_dns("shop.lab", "10.20.0.99")["exit_code"] == 0
 
 
-def test_capture_numbers_packets_and_always_cleans_up(monkeypatch):
+def test_capture_numbers_packets_and_always_cleans_up(monkeypatch, tmp_path):
     lab = DockerLab()
     calls = []
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    def copy(_cmd, **kwargs):
+        kwargs["stdout"].write(b"pcap")
+        return subprocess.CompletedProcess(_cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", copy)
 
     def run(service, *args, **kwargs):
         calls.append(args)
@@ -83,10 +90,23 @@ def test_capture_numbers_packets_and_always_cleans_up(monkeypatch):
         return {"exit_code": 0}
 
     monkeypatch.setattr(lab, "_run", run)
-    result, _ = lab._capture("http://shop.lab/")
+    result, path = lab._capture("http://shop.lab/")
     assert result["packets"] == 2
     assert result["output"] == "#1 packet one\n#2 packet two\n"
-    assert calls[-1] == ("sh", "/stop-capture.sh")
+    assert Path(path).read_bytes() == b"pcap"
+    assert Path(path).stat().st_mode & 0o777 == 0o600
+    assert ("sh", "/stop-capture.sh") in calls
+    assert calls[-1][0:2] == ("rm", "-f")
+
+
+def test_capture_copy_failure_is_reported(monkeypatch, tmp_path):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    lab = DockerLab()
+    monkeypatch.setattr(lab, "_run", lambda *a, **kw: {"exit_code": 0, "stdout": "", "stderr": ""})
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a[0], 1))
+    result, path = lab._capture("http://shop.lab/")
+    assert result["exit_code"] == 1
+    assert not Path(path).exists()
 
 
 def test_lab_check_recovers_dirty_start(monkeypatch, tmp_path):
@@ -116,6 +136,12 @@ def test_lab_check_recovers_dirty_start(monkeypatch, tmp_path):
     assert cmd_lab_check(args) == 0
     steps = json.loads(next(tmp_path.glob("*.jsonl")).read_text())["steps"]
     assert not steps["health_check_initial"]["ok"] and steps["health_check"]["ok"]
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+def test_web_server_runs_without_root():
+    result = DockerLab()._run("web", "sh", "-c", "awk '/^Uid:/ {print $2}' /proc/1/status")
+    assert result["exit_code"] == 0 and result["stdout"].strip() not in ("", "0")
 
 
 @pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")

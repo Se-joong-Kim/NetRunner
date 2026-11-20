@@ -97,7 +97,7 @@ opencode는 GLM 호출(Breaker)과 개발 에이전트에 쓴다. 원칙은 허�
 - 토큰이나 키를 검색하지 않는다. 환경변수는 이름 목록만 보고 값은 보지 않는다.
 - 정답이 든 기록(라운드 기록, Breaker 호출 기록, 제안 시나리오, `lab-check` 기록, `report`의 HTML)은 저장소 밖 `~/netrunner-private/`(700)에 둔다. `demo`, `run`, `lab-check`, `breaker-propose`, `match`의 `--out` 기본값이 `~/netrunner-private/runs`이고, `report`는 `--html ~/netrunner-private/...`로 쓴다. 저장소의 `runs/`에 두지 않는다. 이 폴더는 opencode 에이전트의 `external_directory` 거부로 에이전트가 읽지 못한다. `http_demo`의 기본값은 담당자(이현섭)가 #22에서 바꾼다.
 - 시연과 테스트용 `fixtures/`의 시나리오(정답 키 포함)는 git에 추적해도 된다(#23, 2026-11-20 결정). 막아야 하는 것은 Diagnoser와 Breaker 같은 에이전트가 그 파일을 읽는 경로다. 그래서 위 opencode 절의 권한 거부(`fixtures/**/*.scenario.json`)를 유지하고, 샌드박스를 바꿀 때 이 거부가 남아 있는지 `tests/test_sandbox_config.py`로 확인한다.
-- 실험망 캡처(`captures/`의 pcap)는 주입 중 DNS와 TCP 흔적을 담아 정답 단서가 될 수 있다. 지금은 저장소의 `captures/`(root 소유, git 제외)에 쌓인다. 옮기는 결정은 실험망 담당이 한다.
+- 실험망 캡처는 정답 단서가 될 수 있어 `~/netrunner-private/captures/`에 저장한다. 기존 저장소의 `captures/`는 자동으로 옮기거나 삭제하지 않는다.
 - opencode 세션 데이터베이스(`~/.local/share/opencode/opencode.db`)에는 정답 시나리오가 평문으로 남는다. opencode 서비스가 이 파일을 쓰는 중이라 옮기지 않는다. 정리(보존 기간, 세션 삭제, 서비스 중지)는 사용자가 정한다. 정할 때까지 이 파일을 공유하거나 커밋하지 않는다.
 - 실험망 컨테이너는 `privileged`, `network_mode: host`, 장치 마운트, Docker 소켓 마운트를 쓰지 않는다. `NET_ADMIN`과 `NET_RAW`는 필요한 컨테이너에만 준다. 쓰지 않을 때는 `docker compose down`으로 내린다.
 - 이 계정은 `docker` 그룹이라 Docker 데몬 접근이 root 권한과 같다. 모델 에이전트(opencode)가 도는 경로에서는 Docker를 부르지 않는다. 실험망 코드는 사람이 실행한 명령에서만 Docker를 부른다.

@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 from .child_env import child_environment
 from .contracts import FaultSpec, LabResult, Scenario, read_json
+from .records import ensure_private_dir
 
 ROOT = Path(__file__).resolve().parent.parent
 COMPOSE_FILE = ROOT / "compose.yaml"
@@ -183,9 +184,10 @@ class DockerLab:
         return LabResult(r["exit_code"] == 0, f"{fault.id} 주입", {"command": r})
 
     def _capture(self, url: str) -> tuple[dict, str]:
-        (ROOT / "captures").mkdir(exist_ok=True)
+        out = ensure_private_dir(Path.home() / "netrunner-private" / "captures")
         name = f"lab-{uuid.uuid4().hex}.pcap"
-        path = "/captures/" + name
+        path = "/tmp/" + name
+        local = out / name
         try:
             result = self._run(
                 "client",
@@ -202,14 +204,42 @@ class DockerLab:
         result["cleanup"] = stopped
         if stopped["exit_code"] != 0:
             result["exit_code"] = 1
+        if result["exit_code"] == 0:
+            files = [arg for f in compose_files(IS_WINDOWS) for arg in ("-f", str(f))]
+            cmd = ["docker", "compose", *files, "exec", "-T", "client", "cat", path]
+            created = False
+            try:
+                fd = os.open(
+                    local, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600
+                )
+                created = True
+                with os.fdopen(fd, "wb") as fp:
+                    copied = subprocess.run(
+                        cmd,
+                        stdout=fp,
+                        stderr=subprocess.PIPE,
+                        timeout=15,
+                        env=child_environment(os.environ),
+                    )
+                if copied.returncode != 0:
+                    raise OSError("캡처 복사 실패")
+            except (OSError, subprocess.TimeoutExpired) as e:
+                if created:
+                    local.unlink(missing_ok=True)
+                result["exit_code"] = 1
+                result["stderr"] += f" 캡처 저장 실패: {e}"
+        removed = self._run("client", "rm", "-f", path)
+        if removed["exit_code"] != 0:
+            result["exit_code"] = 1
+            result["stderr"] += " 컨테이너 캡처 정리 실패"
         lines = result["stdout"].splitlines()
         numbers = [
             int(match.group(1)) for line in lines if (match := re.match(r"^\s*(\d+)\s", line))
         ]
         result["output"] = re.sub(r"(?m)^\s*(\d+)\s+", r"#\1 ", result["stdout"])
         result["packets"] = max(numbers, default=0)
-        result["file"] = str(ROOT / "captures" / name)
-        return result, str(ROOT / "captures" / name)
+        result["file"] = str(local)
+        return result, str(local)
 
     def verify_symptom(self, scenario: Scenario) -> LabResult:
         """DNS 답, 접속 결과, 패킷 캡처로 장애별 증상을 확인한다."""
