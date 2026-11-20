@@ -48,6 +48,8 @@ npm install --prefix .venv-opencode --save-exact @opencode/cli@2.3.0
 
 이 버전은 `--standalone`과 `--archived` 옵션을 제공한다. 실행 파일 경로는 `--opencode`로 넘기거나 `NETRUNNER_OPENCODE`에 적는다. 둘 다 없으면 PATH의 `opencode`를 쓰므로 전역 설치본이 잡힐 수 있다. Linux와 macOS는 `.venv-opencode/node_modules/.bin/opencode`, Windows는 `.venv-opencode\node_modules\.bin\opencode.cmd`다. 잠금 파일(`package-lock.json`)은 저장소에 없으므로 버전은 이 문서의 값을 따른다. 버전을 올릴 때는 CLAUDE.md의 opencode 절을 따른다.
 
+설치한 뒤 한 번 `opencode auth login opencode-go`로 키를 opencode 자격 증명 저장소에 등록한다. Windows에서는 `.venv-opencode\node_modules\.bin\opencode.cmd auth login opencode-go`다. 키는 대화형으로 입력하고 명령 인자로 넘기지 않는다. 환경변수 `OPENCODE_API_KEY`는 허용 목록(`netrunner/child_env.py`)이 opencode에 넘기지 않으므로, 등록하지 않으면 `Model unavailable: opencode-go/...` 오류가 난다. 등록 여부는 `opencode auth list`로 본다(#40).
+
 `run`은 고정 세트(`--dir`, 기본 `fixtures/first_integration`)를 심판으로 `--repeat`번 돌리고, 결과 표와 화면을 `--out`(기본 `~/netrunner-private/runs`, 저장소 밖)에 남긴다. 기본(`--diagnoser replay`)은 저장된 진단을 재생하므로 AI 진단 성능이 아니라 실험망의 재현·정상화와 심판 경로를 확인하는 용도다. `--diagnoser`로 진단기를 여럿 주면(예: 방식 A·B·C·C-1·C-2) 고정 세트를 진단기마다 돌려 방식별 지표를 비교한다. 결과 표의 `증상 재현`과 `초기화 확인` 열이 완료 기준(반복 시도 중 재현·정상화 성공 건수)이다. 정상화가 확인되지 않으면 그 자리에서 멈춘다. `--impl mock`은 모의 실험망으로 같은 과정을 돌리며, `demo`는 `run --impl mock --repeat 1`과 같다.
 
 `match`는 Breaker가 GLM으로 낸 시나리오를 심판이 라운드마다 검증, 주입, 재현 확인, 진단, 채점, 정상화 확인까지 돌린다. 끝나면 진단 지표 표와 함께 Breaker 제안의 검증 거부, 증상 재현, 정상화 확인 수를 보여 준다. 진단기는 `--diagnoser`로 고르고, 실제 Diagnoser가 들어오기 전에는 원인을 답하지 않는 자리표시(`none`)를 쓴다.
