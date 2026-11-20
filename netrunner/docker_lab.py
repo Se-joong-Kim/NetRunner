@@ -12,8 +12,10 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .child_env import child_environment
-from .contracts import FaultSpec, LabResult, Scenario, read_json
+from .contracts import FaultSpec, LabResult, ProbeResult, Scenario, read_json
 from .records import ensure_private_dir
+from .tools import check_args
+from .validate import LabInfo
 
 ROOT = Path(__file__).resolve().parent.parent
 COMPOSE_FILE = ROOT / "compose.yaml"
@@ -35,6 +37,70 @@ class DockerLab:
     def __init__(self, config: str | Path = ROOT / "config/lab.json"):
         self.config = read_json(config)
         self.hosts = self.config["hosts"]
+        self.lab_info = LabInfo.load(config)
+
+    def run_probe(self, tool: str, args: dict) -> ProbeResult:
+        """클라이언트에서 허용된 검사 도구를 실행한다."""
+        if tool not in {"dig", "curl", "capture"}:
+            return ProbeResult(False, error="지원하지 않는 검사 도구")
+        error = check_args(tool, args, self.lab_info)
+        if error:
+            return ProbeResult(False, error=error)
+        if tool == "capture":
+            result, path = self._capture(args["url"])
+            if result["exit_code"] != 0:
+                return ProbeResult(False, error="캡처 실행 실패")
+            return ProbeResult(
+                True, result["output"], result["elapsed_ms"], result["packets"], path
+            )
+        if tool == "dig":
+            server = args.get("server", "dns")
+            server = self.hosts.get(server, server)
+            result = self._run(
+                "client", "dig", "+time=2", "+tries=1", "@" + server, args["domain"], "A"
+            )
+            ok = result["exit_code"] in (0, 9)
+            output = result["stdout"] + result["stderr"]
+        else:
+            url = args["url"]
+            extra = []
+            if "resolve_ip" in args:
+                parsed = urlsplit(url)
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                extra = [
+                    "--resolve",
+                    f"{parsed.hostname}:{port}:{args['resolve_ip']}",
+                ]
+            fields = (
+                "http_code",
+                "time_namelookup",
+                "time_connect",
+                "time_appconnect",
+                "time_starttransfer",
+                "time_total",
+            )
+            format_string = "\n" + "\n".join(f"{field}=%{{{field}}}" for field in fields)
+            result = self._run(
+                "client",
+                "curl",
+                "--noproxy",
+                "*",
+                "--max-time",
+                "5",
+                "-sS",
+                "-v",
+                "-o",
+                "/dev/null",
+                "-w",
+                format_string,
+                *extra,
+                url,
+            )
+            ok = result["exit_code"] is not None and "http_code=" in result["stdout"]
+            output = f"exit_code={result['exit_code']}\n{result['stdout']}\n{result['stderr']}"
+        if not ok:
+            return ProbeResult(False, error="검사 실행 실패")
+        return ProbeResult(True, output, result["elapsed_ms"])
 
     def _run(self, service: str, *args: str, timeout: int = 20) -> dict:
         files = [arg for f in compose_files(IS_WINDOWS) for arg in ("-f", str(f))]

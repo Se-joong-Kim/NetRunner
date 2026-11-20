@@ -63,8 +63,8 @@ LAB_IMPLS: dict[str, Callable[[Path], Lab]] = {
 
 
 # 실험망 자체가 검사 도구(run_probe)를 실행하는 구현. 여기 없는 구현은 저장된
-# 진단의 검사 출력을 재생한다. DockerLab.run_probe가 생기면 "docker"를 넣는다.
-PROBES_FROM_LAB: frozenset[str] = frozenset()
+# 진단의 검사 출력을 재생한다.
+PROBES_FROM_LAB: frozenset[str] = frozenset({"docker"})
 
 
 class NoDiagnosis:
