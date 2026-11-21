@@ -44,6 +44,15 @@ def test_d2_allows_other_lab_hosts(monkeypatch):
     assert calls == [("shop.lab", lab.hosts[name]) for name in ("dns", "alt_dns", "router")]
 
 
+def test_d1_validates_domain_before_injection(monkeypatch):
+    lab = DockerLab()
+    calls = []
+    monkeypatch.setattr(lab, "_set_dns", lambda domain: calls.append(domain) or {"exit_code": 0})
+    assert not lab.inject(FaultSpec("D1", {"domain": "example.com"})).ok
+    assert lab.inject(FaultSpec("D1", {"domain": "shop.lab"})).ok
+    assert calls == ["shop.lab"]
+
+
 def test_reset_attempts_firewall_even_if_dns_fails(monkeypatch):
     lab = DockerLab()
     calls = []
@@ -230,6 +239,23 @@ def test_real_lab_recovers_after_each_fault(filename):
         assert Path(result.observations["pcap"]).is_file()
         assert result.observations["capture"]["packets"] > 0
         assert result.observations["capture"]["output"].startswith("#1 ")
+    finally:
+        assert lab.reset().ok
+        assert lab.health_check(scenario.target_url).ok
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+@pytest.mark.parametrize("filename", ["fs01_d1_shop", "fs02_d1_news"])
+def test_real_d1_recovers(filename):
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/fixed_set" / f"{filename}.scenario.json")
+    )
+    try:
+        assert lab.health_check(scenario.target_url).ok
+        assert lab.inject(scenario.faults[0]).ok
+        result = lab.verify_symptom(scenario)
+        assert result.ok, result.observations
     finally:
         assert lab.reset().ok
         assert lab.health_check(scenario.target_url).ok

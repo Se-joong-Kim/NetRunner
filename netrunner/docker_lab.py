@@ -31,7 +31,7 @@ def compose_files(windows: bool) -> list[Path]:
 
 
 class DockerLab:
-    """Docker Compose 실험망에서 D2·T2를 주입하고 되돌리는 Lab 구현."""
+    """Docker Compose 실험망에서 단일 장애를 주입하고 되돌리는 Lab 구현."""
 
     # shortcut: 한 실험망은 순차 실행만 지원, 동시 라운드 지원 시 설정과 캡처를 격리한다.
     def __init__(self, config: str | Path = ROOT / "config/lab.json"):
@@ -180,7 +180,7 @@ class DockerLab:
 
     def _set_dns(self, domain: str | None = None, ip: str | None = None) -> dict:
         hosts = [(ip if d == domain else self.config["web_ip"], d) for d in self.config["domains"]]
-        args = [item for pair in hosts for item in pair]
+        args = [item for address, name in hosts if address is not None for item in (address, name)]
         script = (
             'set -e; : > /tmp/dns-hosts.new; while [ "$#" -gt 0 ]; do '
             'printf "%s %s\\n" "$1" "$2" >> /tmp/dns-hosts.new; shift 2; done; '
@@ -192,7 +192,7 @@ class DockerLab:
                 checks = [self._dns(self.hosts["dns"], d) for _, d in hosts]
                 result["checks"] = checks
                 if all(
-                    check["exit_code"] == 0 and check["stdout"].strip() == expected
+                    check["exit_code"] == 0 and check["stdout"].strip() == (expected or "")
                     for (expected, _), check in zip(hosts, checks, strict=True)
                 ):
                     break
@@ -211,8 +211,14 @@ class DockerLab:
         return LabResult(ok, "정상 HTTP 200" if ok else "정상 접속 실패", {"curl": r})
 
     def inject(self, fault: FaultSpec) -> LabResult:
-        """D2는 DNS 응답을, T2는 웹 서버 방화벽을 바꿔 장애를 심는다."""
-        if fault.id == "D2" and set(fault.params) == {"domain", "ip"}:
+        """DNS 응답 또는 웹 서버 방화벽을 바꿔 장애를 심는다."""
+        if (
+            fault.id == "D1"
+            and set(fault.params) == {"domain"}
+            and fault.params["domain"] in self.config["domains"]
+        ):
+            r = self._set_dns(fault.params["domain"])
+        elif fault.id == "D2" and set(fault.params) == {"domain", "ip"}:
             domain, ip = fault.params["domain"], fault.params["ip"]
             try:
                 address = ipaddress.ip_address(ip)
@@ -312,7 +318,7 @@ class DockerLab:
         if not self._target(scenario.target_url) or len(scenario.faults) != 1:
             return LabResult(False, "첫 통합은 허용된 URL의 단일 장애만 지원")
         fault = scenario.faults[0]
-        if fault.id not in ("D2", "T2"):
+        if fault.id not in ("D1", "D2", "T2"):
             return LabResult(False, "지원하지 않는 장애")
         domain = scenario.domain
         primary = self._dns(self.hosts["dns"], domain)
@@ -328,7 +334,16 @@ class DockerLab:
         }
         dns_ok = primary["exit_code"] == alternate["exit_code"] == 0
         alt_ok = alternate["stdout"].strip() == self.config["web_ip"]
-        if fault.id == "D2":
+        if fault.id == "D1":
+            full_dns = self._run(
+                "client", "dig", "+time=2", "+tries=1", "@" + self.hosts["dns"], domain, "A"
+            )
+            observations["full_dns"] = full_dns
+            ok = (
+                dns_ok and alt_ok and full_dns["exit_code"] == 0
+                and "status: NXDOMAIN" in full_dns["stdout"] and curl["exit_code"] == 6
+            )
+        elif fault.id == "D2":
             direct = self._curl(
                 scenario.target_url, "--resolve", f"{domain}:80:{self.config['web_ip']}"
             )

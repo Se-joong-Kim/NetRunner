@@ -25,6 +25,7 @@ from netrunner.validate import LabInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 LAB = LabInfo.load(ROOT / "config" / "lab.json")
+LAB.enabled_faults = ["D2", "T2"]
 TARGET = "http://shop.lab/"
 D2_LABEL = FAULTS["D2"].label
 T2_LABEL = FAULTS["T2"].label
