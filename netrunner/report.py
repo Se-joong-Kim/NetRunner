@@ -130,6 +130,69 @@ def summarize(records: list[dict]) -> list[dict]:
     return rows
 
 
+def _scored(records: list[dict]) -> list[dict]:
+    return [r for r in records if r["status"] == Status.SCORED]
+
+
+def misdiagnosis_rows(records: list[dict]) -> list[dict]:
+    """방식·모델·세트·장애별로 판정(정답, 원인 틀림, 놓침 등)을 센다."""
+    counts: dict[tuple, Counter] = defaultdict(Counter)
+    for r in _scored(records):
+        for f in r["score"]["faults"]:
+            key = (r["method"], r["model"], r["origin"], f"{f['id']} {f['label']}")
+            counts[key][f["verdict"]] += 1
+    return [
+        {"model": m, "method": me, "origin": o, "fault": fault, **{v: c[v] for v in VERDICT_KO}}
+        for (me, m, o, fault), c in sorted(counts.items())
+    ]
+
+
+def false_positive_rows(records: list[dict]) -> list[dict]:
+    """방식·모델·세트별로 정답에 없는 진단(오탐)의 라벨을 센다."""
+    counts: Counter = Counter()
+    for r in _scored(records):
+        for label in r["score"]["false_positives"]:
+            counts[(r["method"], r["model"], r["origin"], label)] += 1
+    return [
+        {"model": m, "method": me, "origin": o, "label": label, "count": n}
+        for (me, m, o, label), n in sorted(counts.items())
+    ]
+
+
+def repeat_rows(records: list[dict]) -> list[dict]:
+    """방식·모델·세트·반복 회차별 단계·원인 정답 수.
+
+    회차는 기록 순서로 정한다. 같은 방식·모델·세트에서 같은 시나리오가
+    k번째로 나오면 k회차다(run --repeat의 반복 → 시나리오 → 진단기
+    순서와 맞는다). 무효 라운드도 회차는 세고 채점에서만 뺀다.
+    stage와 cause는 (맞힌 수, 채점한 장애 수) 짝이다.
+    """
+    seen: Counter = Counter()
+    sums: dict[tuple, list[int]] = {}
+    for r in records:
+        if r["status"] == Status.PROPOSAL_FAILED:
+            continue
+        group = (r["method"], r["model"], r["origin"])
+        seen[(*group, r["scenario_id"])] += 1
+        s = sums.setdefault((*group, seen[(*group, r["scenario_id"])]), [0, 0, 0])
+        if r["status"] == Status.SCORED:
+            sc = r["score"]
+            s[0] += sc["stage_correct"]
+            s[1] += sc["cause_correct"]
+            s[2] += sc["scored_faults"]
+    return [
+        {
+            "model": m,
+            "method": me,
+            "origin": o,
+            "repeat": k,
+            "stage": (st, n),
+            "cause": (ca, n),
+        }
+        for (me, m, o, k), (st, ca, n) in sorted(sums.items())
+    ]
+
+
 COLUMNS = [
     ("model", "모델"),
     ("method", "방식"),
@@ -161,10 +224,10 @@ def format_table(rows: list[dict]) -> str:
 
 _CSS = """
 :root { --bg:#fff; --fg:#1d1d1f; --muted:#6e6e73; --line:#e3e3e8; --card:#f7f7f9;
-        --ok:#1a7f37; --bad:#c62828; --warn:#9a6700; }
+        --ok:#1a7f37; --bad:#c62828; --warn:#9a6700; --bar:#2a78d6; }
 @media (prefers-color-scheme: dark) {
   :root { --bg:#141416; --fg:#ececf0; --muted:#9a9aa3; --line:#2c2c31; --card:#1c1c20;
-          --ok:#4ac26b; --bad:#ff6b6b; --warn:#d4a72c; } }
+          --ok:#4ac26b; --bad:#ff6b6b; --warn:#d4a72c; --bar:#3987e5; } }
 body { background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, "Malgun Gothic", sans-serif;
        max-width:1100px; margin:0 auto; padding:24px 16px; }
 h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:16px; margin:0; }
@@ -178,6 +241,11 @@ th, td { border-bottom:1px solid var(--line); padding:6px 8px;
 .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
 pre { white-space:pre-wrap; word-break:break-all; font-size:12px; margin:6px 0 0; }
 code { font-size:12px; }
+h2.sec { margin:24px 0 4px; }
+svg.chart { width:100%; max-width:600px; height:auto; display:block; }
+svg.chart text { fill:var(--muted); font-size:11px; }
+svg.chart .grid { stroke:var(--line); stroke-width:1; }
+svg.chart .bar { fill:var(--bar); }
 """
 
 
@@ -295,6 +363,117 @@ def _round_card(r: dict) -> str:
     return "\n".join(out)
 
 
+def _html_table(headers: list[str], body: list[list[str]]) -> str:
+    """머리글과 이미 이스케이프한 칸으로 표를 만든다."""
+    head = "".join(f"<th>{_e(h)}</th>" for h in headers)
+    rows = "".join("<tr>" + "".join(body_row) + "</tr>" for body_row in body)
+    return f"<div class='wrap'><table><tr>{head}</tr>{rows}</table></div>"
+
+
+def misdiagnosis_section(records: list[dict]) -> str:
+    """장애별 판정 횟수와 오탐 라벨 표. 채점한 라운드가 없으면 빈 문자열."""
+    rows = misdiagnosis_rows(records)
+    if not rows:
+        return ""
+
+    def count(v: str, n: int) -> str:
+        cls = "" if n == 0 else "ok" if v == "correct" else "muted" if v == "masked" else "bad"
+        return f"<td class='{cls}'>{n}</td>"
+
+    body = [
+        [f"<td>{_e(r[k])}</td>" for k in ("model", "method", "origin", "fault")]
+        + [count(v, r[v]) for v in VERDICT_KO]
+        for r in rows
+    ]
+    out = [
+        "<h2 class='sec'>오진 유형</h2>",
+        "<p class='muted'>채점한 라운드에서 정답 장애마다 받은 판정 횟수</p>",
+        _html_table(["모델", "방식", "세트", "정답 장애", *VERDICT_KO.values()], body),
+    ]
+    fps = false_positive_rows(records)
+    if fps:
+        body = [
+            [f"<td>{_e(r[k])}</td>" for k in ("model", "method", "origin", "label")]
+            + [f"<td class='bad'>{r['count']}</td>"]
+            for r in fps
+        ]
+        out.append(_html_table(["모델", "방식", "세트", "오탐(정답에 없는 진단)", "횟수"], body))
+    return "\n".join(out)
+
+
+# 반복 측정 그래프 치수(px, viewBox 기준)
+_LABEL_W, _PLOT_W, _BAR_H, _ROW_H, _GROUP_GAP, _AXIS_H = 120, 440, 10, 18, 8, 22
+
+
+def _bar_path(x: float, y: float, w: float, h: float, r: float = 4) -> str:
+    """기준선(왼쪽)은 각지고 값 쪽 끝만 둥근 가로 막대."""
+    r = min(r, w, h / 2)
+    return (
+        f"M{x:.1f},{y:.1f}h{w - r:.1f}a{r},{r} 0 0 1 {r},{r}v{h - 2 * r:.1f}"
+        f"a{r},{r} 0 0 1 -{r},{r}h-{w - r:.1f}z"
+    )
+
+
+def _repeat_chart(rows: list[dict], metric: str, title: str) -> str:
+    """방식·회차마다 가로 막대 하나. 값은 마우스를 올리면 보인다."""
+    marks, y, prev = [], 0, None
+    for r in rows:
+        group = (r["model"], r["method"], r["origin"])
+        if prev is not None and group != prev:
+            y += _GROUP_GAP
+        prev = group
+        n, d = r[metric]
+        label = f"{r['method']} · {r['repeat']}회"
+        tip = f"{r['model']} · 방식 {r['method']} · {r['repeat']}회차: {title} {ratio(n, d)}"
+        bar = (
+            f"<path class='bar' d='{_bar_path(_LABEL_W, y + 4, _PLOT_W * n / d, _BAR_H)}'/>"
+            if d and n
+            else ""
+        )
+        marks.append(
+            f"<g><title>{_e(tip)}</title>"
+            f"<rect x='0' y='{y}' width='{_LABEL_W + _PLOT_W}' height='{_ROW_H}' "
+            f"fill='transparent'/>"
+            f"<text x='{_LABEL_W - 8}' y='{y + 13}' text-anchor='end'>{_e(label)}</text>"
+            f"{bar}</g>"
+        )
+        y += _ROW_H
+    grid = "".join(
+        f"<line class='grid' x1='{_LABEL_W + _PLOT_W * p}' x2='{_LABEL_W + _PLOT_W * p}' "
+        f"y1='0' y2='{y}'/>"
+        f"<text x='{_LABEL_W + _PLOT_W * p}' y='{y + 14}' text-anchor='middle'>{p:.0%}</text>"
+        for p in (0, 0.5, 1)
+    )
+    width, height = _LABEL_W + _PLOT_W + 20, y + _AXIS_H
+    return (
+        f"<p><b>{_e(title)}</b></p>"
+        f"<svg class='chart' viewBox='0 0 {width} {height}' role='img' "
+        f"aria-label='{_e(title)} 반복 측정'>{grid}{''.join(marks)}</svg>"
+    )
+
+
+def repeat_section(records: list[dict]) -> str:
+    """반복 회차별 정확도 그래프와 표. 회차가 2 이상인 기록에서만 그린다."""
+    rows = repeat_rows(records)
+    if max((r["repeat"] for r in rows), default=0) < 2:
+        return ""
+    body = [
+        [f"<td>{_e(r[k])}</td>" for k in ("model", "method", "origin", "repeat")]
+        + [f"<td>{ratio(*r['stage'])}</td><td>{ratio(*r['cause'])}</td>"]
+        for r in rows
+    ]
+    return "\n".join(
+        [
+            "<h2 class='sec'>반복 측정</h2>",
+            "<p class='muted'>같은 시나리오를 다시 돌린 회차별 정확도. "
+            "회차가 바뀌어도 값이 비슷하면 결과가 안정적이다.</p>",
+            _repeat_chart(rows, "cause", "원인 정확도"),
+            _repeat_chart(rows, "stage", "단계 정확도"),
+            _html_table(["모델", "방식", "세트", "회차", "단계 정확도", "원인 정확도"], body),
+        ]
+    )
+
+
 def render_html(records: list[dict], rows: list[dict] | None = None) -> str:
     """라운드 기록 전체를 하나의 HTML 페이지로 만든다."""
     rows = summarize(records) if rows is None else rows
@@ -316,5 +495,6 @@ def render_html(records: list[dict], rows: list[dict] | None = None) -> str:
         f"<h1>NetRunner 라운드 결과</h1>"
         f"<p class='muted'>측정 위치: 클라이언트 컨테이너 · 라운드 {len(records) - failed}개 · "
         f"검증에서 거부된 제안 {rejected}개{failure_note}</p>"
-        f"{''.join(table)}{cards}</body></html>"
+        f"{''.join(table)}{misdiagnosis_section(records)}{repeat_section(records)}"
+        f"<h2 class='sec'>라운드별 결과</h2>{cards}</body></html>"
     )
