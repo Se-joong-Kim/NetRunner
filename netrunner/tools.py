@@ -78,12 +78,14 @@ _KINDS: dict[str, Callable[[object, LabInfo], bool]] = {
     "host": _host,
     "port": _int_between(1, 65535),
     "count": _int_between(1, 10),
+    "size": _int_between(0, 1472),
 }
 
 # LLM용 JSON 스키마의 타입과 범위
 _SCHEMA: dict[str, dict] = {
     "port": {"type": "integer", "minimum": 1, "maximum": 65535},
     "count": {"type": "integer", "minimum": 1, "maximum": 10},
+    "size": {"type": "integer", "minimum": 0, "maximum": 1472},
 }
 
 # --- 도구 목록. 설명에 장애 원인 이름을 넣지 않는다.
@@ -146,6 +148,7 @@ TOOLS: dict[str, Tool] = {
             (
                 Arg("host", "host", True, "실험망 도메인 또는 실험망 IP"),
                 Arg("count", "count", False, "보낼 횟수(1~10). 생략하면 4"),
+                Arg("size", "size", False, "에코 데이터 크기(0~1472바이트). 생략하면 56"),
             ),
             (r"packet loss",),
         ),

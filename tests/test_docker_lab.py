@@ -10,6 +10,7 @@ from netrunner.__main__ import cmd_lab_check
 from netrunner.contracts import FaultSpec, LabResult, Scenario, read_json
 from netrunner.diagnoser import ReplayDiagnoser
 from netrunner.docker_lab import ROOT, DockerLab
+from netrunner.faults import FAULTS
 from netrunner.referee import Referee
 from netrunner.tools import missing_parts
 from netrunner.validate import LabInfo
@@ -22,13 +23,23 @@ def test_lab_scripts_keep_lf_line_endings():
     assert [p.name for p in scripts if b"\r" in p.read_bytes()] == []
 
 
+def test_config_enables_all_sixteen_faults():
+    assert set(DockerLab().lab_info.enabled_faults) == set(FAULTS)
+
+
 def test_invalid_faults_and_urls_never_run_commands(monkeypatch):
     lab = DockerLab()
     monkeypatch.setattr(lab, "_run", lambda *args, **kwargs: pytest.fail("unexpected command"))
     assert not lab.inject(FaultSpec("D2", {"domain": "shop.lab", "ip": "8.8.8.8"})).ok
     assert not lab.inject(FaultSpec("D2", {"domain": "shop.lab", "ip": "10.20.0.10"})).ok
     assert not lab.inject(FaultSpec("T2", {"port": 443})).ok
-    assert not lab.inject(FaultSpec("N1", {"delay_ms": 100})).ok
+    assert not lab.inject(FaultSpec("T1", {"port": True})).ok
+    assert not lab.inject(FaultSpec("N1", {"delay_ms": 19})).ok
+    assert not lab.inject(FaultSpec("N1", {"delay_ms": True})).ok
+    assert not lab.inject(FaultSpec("D4", {"delay_ms": 99})).ok
+    assert not lab.inject(FaultSpec("N4", {"rate_kbit": 10000.5})).ok
+    assert not lab.inject(FaultSpec("B1", {"domain": "example.com"})).ok
+    assert not lab.inject(FaultSpec("B2", {"domain": "shop.lab", "block_ip": "10.20.0.99"})).ok
     assert not lab.health_check("http://example.com/").ok
     assert not lab.health_check("http://shop.lab:0/").ok
 
@@ -44,13 +55,53 @@ def test_d2_allows_other_lab_hosts(monkeypatch):
     assert calls == [("shop.lab", lab.hosts[name]) for name in ("dns", "alt_dns", "router")]
 
 
+def test_d1_validates_domain_before_injection(monkeypatch):
+    lab = DockerLab()
+    calls = []
+    monkeypatch.setattr(lab, "_set_dns", lambda domain: calls.append(domain) or {"exit_code": 0})
+    assert not lab.inject(FaultSpec("D1", {"domain": "example.com"})).ok
+    assert lab.inject(FaultSpec("D1", {"domain": "shop.lab"})).ok
+    assert calls == ["shop.lab"]
+
+
 def test_reset_attempts_firewall_even_if_dns_fails(monkeypatch):
     lab = DockerLab()
     calls = []
     monkeypatch.setattr(lab, "_set_dns", lambda: {"exit_code": 1})
+    monkeypatch.setattr(lab, "_set_cert", lambda cert: {"exit_code": 0})
+    monkeypatch.setattr(lab, "_set_redirect", lambda enabled: {"exit_code": 0})
     monkeypatch.setattr(lab, "_run", lambda *args, **kw: calls.append(args) or {"exit_code": 0})
     assert not lab.reset().ok
-    assert calls == [("client", "sh", "/stop-capture.sh"), ("web", "iptables", "-F", "NETRUNNER")]
+    assert calls[0] == ("client", "sh", "/stop-capture.sh")
+    assert calls[1] == ("client", "sh", "/stop-load.sh")
+    assert calls[2][:3] == ("client", "sh", "-c")
+    assert ("router", "iptables", "-F", "NETRUNNER") in calls
+    assert ("web", "iptables", "-F", "NETRUNNER") in calls
+    assert any(call[:2] == ("backend", "sh") for call in calls)
+
+
+def test_d3_accepts_no_parameters(monkeypatch):
+    lab = DockerLab()
+    calls = []
+    monkeypatch.setattr(lab, "_run", lambda *args, **kw: calls.append(args) or {"exit_code": 0})
+    assert not lab.inject(FaultSpec("D3", {"x": 1})).ok
+    assert lab.inject(FaultSpec("D3", {})).ok
+    assert calls == [
+        (
+            "router",
+            "iptables",
+            "-A",
+            "NETRUNNER",
+            "-p",
+            "udp",
+            "-d",
+            lab.hosts["dns"],
+            "--dport",
+            "53",
+            "-j",
+            "DROP",
+        )
+    ]
 
 
 def test_timeout_preserves_partial_output(monkeypatch):
@@ -204,6 +255,7 @@ def test_real_probe_outputs():
         ("dig", {"domain": "shop.lab", "server": "alt_dns"}),
         ("curl", {"url": "http://shop.lab/"}),
         ("capture", {"url": "http://shop.lab/"}),
+        ("ping", {"host": "10.20.0.10", "count": 2}),
     ):
         result = lab.run_probe(tool, args)
         assert result.ok, result.error
@@ -230,6 +282,185 @@ def test_real_lab_recovers_after_each_fault(filename):
         assert Path(result.observations["pcap"]).is_file()
         assert result.observations["capture"]["packets"] > 0
         assert result.observations["capture"]["output"].startswith("#1 ")
+    finally:
+        assert lab.reset().ok
+        assert lab.health_check(scenario.target_url).ok
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "fs01_d1_shop",
+        "fs02_d1_news",
+        "fs05_d3_shop",
+        "fs06_d3_news",
+        "fs09_n1_shop",
+        "fs10_n1_news",
+        "fs11_n1_shop_long",
+    ],
+)
+def test_real_dns_fault_recovers(filename):
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/fixed_set" / f"{filename}.scenario.json")
+    )
+    try:
+        assert lab.health_check(scenario.target_url).ok
+        assert lab.inject(scenario.faults[0]).ok
+        result = lab.verify_symptom(scenario)
+        assert result.ok, result.observations
+    finally:
+        assert lab.reset().ok
+        assert lab.health_check(scenario.target_url).ok
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+@pytest.mark.parametrize(
+    "fault",
+    [
+        FaultSpec("T1", {"port": 80}),
+        FaultSpec("N2", {"loss_pct": 30}),
+        FaultSpec("N3", {"min_size": 576}),
+        FaultSpec("N3", {"min_size": 1500}),
+        FaultSpec("H2", {}),
+    ],
+)
+def test_real_extra_fault_recovers(fault):
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json")
+    )
+    scenario.faults = [fault]
+    try:
+        assert lab.health_check(scenario.target_url).ok
+        if fault.id == "N3":
+            assert lab._curl("http://shop.lab/large")["exit_code"] == 0
+        assert lab.inject(scenario.faults[0]).ok
+        if fault.id == "N3":
+            probe = lab.run_probe(
+                "ping", {"host": "shop.lab", "count": 2, "size": fault.params["min_size"] - 28}
+            )
+            assert probe.ok and "100% packet loss" in probe.output
+        result = lab.verify_symptom(scenario)
+        assert result.ok, result.observations
+    finally:
+        assert lab.reset().ok
+        assert lab.health_check(scenario.target_url).ok
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+@pytest.mark.parametrize(
+    "filename", ["fs12_s1_shop", "fs13_s1_news", "fs14_h1_shop", "fs15_h1_news"]
+)
+def test_real_web_fault_recovers(filename):
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/fixed_set" / f"{filename}.scenario.json")
+    )
+    try:
+        assert lab.health_check(scenario.target_url).ok
+        assert lab.inject(scenario.faults[0]).ok
+        result = lab.verify_symptom(scenario)
+        assert result.ok, result.observations
+    finally:
+        assert lab.reset().ok
+        assert lab.health_check(scenario.target_url).ok
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+@pytest.mark.parametrize(
+    "domain,cert_domain", [("shop.lab", "news.lab"), ("news.lab", "shop.lab")]
+)
+def test_real_s2_recovers(domain, cert_domain):
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/fixed_set/fs12_s1_shop.scenario.json")
+    )
+    scenario.target_url = f"https://{domain}/"
+    scenario.faults = [FaultSpec("S2", {"cert_domain": cert_domain})]
+    try:
+        assert lab.health_check(scenario.target_url).ok
+        assert lab.inject(scenario.faults[0]).ok
+        result = lab.verify_symptom(scenario)
+        assert result.ok, result.observations
+    finally:
+        assert lab.reset().ok
+        assert lab.health_check(scenario.target_url).ok
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+@pytest.mark.parametrize("delay_ms", [100, 3000])
+def test_real_d4_recovers(delay_ms):
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r1_dns_old_ip.scenario.json")
+    )
+    scenario.faults = [FaultSpec("D4", {"domain": scenario.domain, "delay_ms": delay_ms})]
+    try:
+        assert lab.health_check(scenario.target_url).ok
+        assert lab.inject(scenario.faults[0]).ok
+        result = lab.verify_symptom(scenario)
+        assert result.ok, result.observations
+        assert (
+            int(result.observations["timed_dns"]["stdout"].split("Query time: ")[1].split()[0])
+            >= delay_ms * 0.75
+        )
+    finally:
+        assert lab.reset().ok
+        assert lab.health_check(scenario.target_url).ok
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+def test_real_n4_recovers():
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r1_dns_old_ip.scenario.json")
+    )
+    scenario.faults = [FaultSpec("N4", {"rate_kbit": 256})]
+    try:
+        assert lab.health_check(scenario.target_url).ok
+        assert lab.inject(scenario.faults[0]).ok
+        result = lab.verify_symptom(scenario)
+        assert result.ok, result.observations
+    finally:
+        assert lab.reset().ok
+        assert lab.health_check(scenario.target_url).ok
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+@pytest.mark.parametrize("domain", ["shop.lab", "news.lab"])
+def test_real_b1_recovers(domain):
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/fixed_set/fs12_s1_shop.scenario.json")
+    )
+    scenario.target_url = f"https://{domain}/"
+    scenario.faults = [FaultSpec("B1", {"domain": domain})]
+    try:
+        assert lab.health_check(scenario.target_url).ok
+        assert lab.inject(scenario.faults[0]).ok
+        result = lab.verify_symptom(scenario)
+        assert result.ok, result.observations
+    finally:
+        assert lab.reset().ok
+        assert lab.health_check(scenario.target_url).ok
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+@pytest.mark.parametrize("domain", ["shop.lab", "news.lab"])
+def test_real_b2_recovers(domain):
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r1_dns_old_ip.scenario.json")
+    )
+    scenario.target_url = f"http://{domain}/"
+    scenario.faults = [FaultSpec("B2", {"domain": domain, "block_ip": lab.hosts["block_page"]})]
+    try:
+        assert lab.health_check(scenario.target_url).ok
+        assert lab.inject(scenario.faults[0]).ok
+        result = lab.verify_symptom(scenario)
+        assert result.ok, result.observations
     finally:
         assert lab.reset().ok
         assert lab.health_check(scenario.target_url).ok

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 import os
 import re
 import subprocess
@@ -31,7 +32,7 @@ def compose_files(windows: bool) -> list[Path]:
 
 
 class DockerLab:
-    """Docker Compose 실험망에서 D2·T2를 주입하고 되돌리는 Lab 구현."""
+    """Docker Compose 실험망에서 단일 장애를 주입하고 되돌리는 Lab 구현."""
 
     # shortcut: 한 실험망은 순차 실행만 지원, 동시 라운드 지원 시 설정과 캡처를 격리한다.
     def __init__(self, config: str | Path = ROOT / "config/lab.json"):
@@ -41,7 +42,7 @@ class DockerLab:
 
     def run_probe(self, tool: str, args: dict) -> ProbeResult:
         """클라이언트에서 허용된 검사 도구를 실행한다."""
-        if tool not in {"dig", "curl", "capture"}:
+        if tool not in {"dig", "curl", "capture", "ping"}:
             return ProbeResult(False, error="지원하지 않는 검사 도구")
         error = check_args(tool, args, self.lab_info)
         if error:
@@ -53,7 +54,14 @@ class DockerLab:
             return ProbeResult(
                 True, result["output"], result["elapsed_ms"], result["packets"], path
             )
-        if tool == "dig":
+        if tool == "ping":
+            size = ["-s", str(args["size"])] if "size" in args else []
+            result = self._run(
+                "client", "ping", "-c", str(args.get("count", 4)), "-W", "3", *size, args["host"]
+            )
+            ok = result["exit_code"] in (0, 1)
+            output = result["stdout"] + result["stderr"]
+        elif tool == "dig":
             server = args.get("server", "dns")
             server = self.hosts.get(server, server)
             result = self._run(
@@ -146,9 +154,9 @@ class DockerLab:
         try:
             u = urlsplit(url)
             return (
-                u.scheme == "http"
+                u.scheme in ("http", "https")
                 and u.hostname in self.config["domains"]
-                and (u.port is None or u.port == 80)
+                and (u.port is None or u.port == (443 if u.scheme == "https" else 80))
                 and not u.username
                 and not u.password
             )
@@ -173,14 +181,44 @@ class DockerLab:
             url,
         )
 
-    def _dns(self, server: str, domain: str) -> dict:
+    def _dns(self, server: str, domain: str, timeout: int = 2) -> dict:
         return self._run(
-            "client", "dig", "+time=2", "+tries=1", "+short", "@" + server, domain, "A"
+            "client", "dig", f"+time={timeout}", "+tries=1", "+short", "@" + server, domain, "A"
         )
+
+    def _dns_timed(self, server: str, domain: str) -> dict:
+        return self._run(
+            "client", "dig", "+time=5", "+tries=1", "+stats", "@" + server, domain, "A"
+        )
+
+    def _start_load(self) -> dict:
+        script = """\
+if [ -e /tmp/netrunner-load.pid ]; then exit 1; fi
+setsid sh /load.sh >/tmp/netrunner-load.log 2>&1 &
+i=0
+while [ "$i" -lt 10 ]; do
+    if [ -s /tmp/netrunner-load.pid ]; then
+        pid=$(cat /tmp/netrunner-load.pid)
+        if kill -0 "$pid" 2>/dev/null; then exit 0; fi
+    fi
+    sleep 0.1
+    i=$((i + 1))
+done
+exit 1
+"""
+        return self._run(
+            "client",
+            "sh",
+            "-c",
+            script,
+        )
+
+    def _stop_load(self) -> dict:
+        return self._run("client", "sh", "/stop-load.sh", timeout=10)
 
     def _set_dns(self, domain: str | None = None, ip: str | None = None) -> dict:
         hosts = [(ip if d == domain else self.config["web_ip"], d) for d in self.config["domains"]]
-        args = [item for pair in hosts for item in pair]
+        args = [item for address, name in hosts if address is not None for item in (address, name)]
         script = (
             'set -e; : > /tmp/dns-hosts.new; while [ "$#" -gt 0 ]; do '
             'printf "%s %s\\n" "$1" "$2" >> /tmp/dns-hosts.new; shift 2; done; '
@@ -192,7 +230,7 @@ class DockerLab:
                 checks = [self._dns(self.hosts["dns"], d) for _, d in hosts]
                 result["checks"] = checks
                 if all(
-                    check["exit_code"] == 0 and check["stdout"].strip() == expected
+                    check["exit_code"] == 0 and check["stdout"].strip() == (expected or "")
                     for (expected, _), check in zip(hosts, checks, strict=True)
                 ):
                     break
@@ -210,9 +248,266 @@ class DockerLab:
         ok = r["exit_code"] == 0 and r["stdout"].split()[:1] == ["200"]
         return LabResult(ok, "정상 HTTP 200" if ok else "정상 접속 실패", {"curl": r})
 
+    def _set_cert(self, cert: str) -> dict:
+        domain = "news.lab" if cert == "shop" else "shop.lab"
+        r = self._run(
+            "web",
+            "sh",
+            "-c",
+            'cp "$1" /tmp/server.crt && kill -HUP "$(cat /tmp/nginx.pid)"',
+            "sh",
+            f"/certs/{cert}.crt",
+        )
+        if r["exit_code"] == 0:
+            for _ in range(20):
+                check = self._curl(
+                    f"https://{domain}/", "--resolve", f"{domain}:443:{self.config['web_ip']}"
+                )
+                r["check"] = check
+                if (
+                    (
+                        cert == "expired"
+                        and check["exit_code"] == 60
+                        and "certificate has expired" in check["stderr"].lower()
+                    )
+                    or (cert == "valid" and check["exit_code"] == 0)
+                    or (
+                        cert in ("shop", "news")
+                        and check["exit_code"] == 60
+                        and "subject name" in check["stderr"].lower()
+                    )
+                ):
+                    break
+                time.sleep(0.1)
+            else:
+                r["exit_code"] = 1
+                r["stderr"] += " 인증서 적용 확인 실패"
+        return r
+
+    def _set_redirect(self, enabled: bool) -> dict:
+        text = "return 301 $scheme://$host$request_uri;" if enabled else ""
+        r = self._run(
+            "web",
+            "sh",
+            "-c",
+            'printf "%s\\n" "$1" > /tmp/redirect.conf && kill -HUP "$(cat /tmp/nginx.pid)"',
+            "sh",
+            text,
+        )
+        if r["exit_code"] == 0:
+            for _ in range(20):
+                check = self._curl(
+                    "http://shop.lab/", "--resolve", f"shop.lab:80:{self.config['web_ip']}"
+                )
+                r["check"] = check
+                if check["exit_code"] == 0 and check["stdout"].split()[:1] == (
+                    ["301"] if enabled else ["200"]
+                ):
+                    break
+                time.sleep(0.1)
+            else:
+                r["exit_code"] = 1
+                r["stderr"] += " 리다이렉트 설정 확인 실패"
+        return r
+
     def inject(self, fault: FaultSpec) -> LabResult:
-        """D2는 DNS 응답을, T2는 웹 서버 방화벽을 바꿔 장애를 심는다."""
-        if fault.id == "D2" and set(fault.params) == {"domain", "ip"}:
+        """DNS 응답 또는 웹 서버 방화벽을 바꿔 장애를 심는다."""
+        if (
+            fault.id == "D1"
+            and set(fault.params) == {"domain"}
+            and fault.params["domain"] in self.config["domains"]
+        ):
+            r = self._set_dns(fault.params["domain"])
+        elif (
+            fault.id == "N1"
+            and set(fault.params) in ({"delay_ms"}, {"delay_ms", "jitter_ms"})
+            and type(fault.params["delay_ms"]) is int
+            and 20 <= fault.params["delay_ms"] <= 2000
+            and type(fault.params.get("jitter_ms", 0)) is int
+            and 0 <= fault.params.get("jitter_ms", 0) <= 500
+        ):
+            delay = str(fault.params["delay_ms"]) + "ms"
+            jitter = fault.params.get("jitter_ms", 0)
+            args = [str(jitter) + "ms"] if jitter else []
+            r = self._run(
+                "client",
+                "tc",
+                "qdisc",
+                "add",
+                "dev",
+                "eth0",
+                "root",
+                "handle",
+                "10:",
+                "netem",
+                "delay",
+                delay,
+                *args,
+            )
+        elif (
+            fault.id == "N2"
+            and set(fault.params) == {"loss_pct"}
+            and type(fault.params["loss_pct"]) is int
+            and 1 <= fault.params["loss_pct"] <= 30
+        ):
+            r = self._run(
+                "client",
+                "tc",
+                "qdisc",
+                "add",
+                "dev",
+                "eth0",
+                "root",
+                "handle",
+                "10:",
+                "netem",
+                "loss",
+                f"{fault.params['loss_pct']}%",
+            )
+        elif (
+            fault.id == "N3"
+            and set(fault.params) == {"min_size"}
+            and type(fault.params["min_size"]) is int
+            and 576 <= fault.params["min_size"] <= 1500
+        ):
+            r = self._run(
+                "router",
+                "iptables",
+                "-A",
+                "NETRUNNER",
+                "-m",
+                "length",
+                "--length",
+                f"{fault.params['min_size']}:65535",
+                "-j",
+                "DROP",
+            )
+            if r["exit_code"] == 0:
+                r = self._run(
+                    "router",
+                    "iptables",
+                    "-A",
+                    "NETRUNNER",
+                    "-p",
+                    "icmp",
+                    "--icmp-type",
+                    "fragmentation-needed",
+                    "-j",
+                    "DROP",
+                )
+        elif (
+            fault.id == "D4"
+            and set(fault.params) in ({"delay_ms"}, {"domain", "delay_ms"})
+            and type(fault.params["delay_ms"]) is int
+            and 100 <= fault.params["delay_ms"] <= 3000
+            and ("domain" not in fault.params or fault.params["domain"] in self.config["domains"])
+        ):
+            r = self._run(
+                "dns",
+                "tc",
+                "qdisc",
+                "add",
+                "dev",
+                "eth0",
+                "root",
+                "handle",
+                "20:",
+                "netem",
+                "delay",
+                f"{fault.params['delay_ms']}ms",
+            )
+        elif (
+            fault.id == "N4"
+            and set(fault.params) == {"rate_kbit"}
+            and type(fault.params["rate_kbit"]) is int
+            and 256 <= fault.params["rate_kbit"] <= 10000
+        ):
+            script = """\
+set -e
+dev=$(ip route get "$1" | awk '$2 == "dev" {print $3}')
+case "$dev" in eth[0-9]*) ;; *) exit 1;; esac
+tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
+    burst 32k latency 1000ms
+"""
+            r = self._run(
+                "router",
+                "sh",
+                "-c",
+                script,
+                "sh",
+                self.hosts["client"],
+                str(fault.params["rate_kbit"]),
+            )
+            if r["exit_code"] == 0:
+                load = self._start_load()
+                r = {**r, "load": load, "exit_code": load["exit_code"]}
+        elif (
+            fault.id == "B1"
+            and set(fault.params) == {"domain"}
+            and fault.params["domain"] in self.config["domains"]
+        ):
+            # shortcut: split SNI is missed, use stream reassembly if tests require it.
+            r = self._run(
+                "router",
+                "iptables",
+                "-A",
+                "NETRUNNER",
+                "-p",
+                "tcp",
+                "--dport",
+                "443",
+                "-m",
+                "string",
+                "--string",
+                fault.params["domain"],
+                "--algo",
+                "bm",
+                "--icase",
+                "-j",
+                "REJECT",
+                "--reject-with",
+                "tcp-reset",
+            )
+        elif (
+            fault.id == "B2"
+            and set(fault.params) == {"domain", "block_ip"}
+            and fault.params["domain"] in self.config["domains"]
+            and fault.params["block_ip"] == self.hosts.get("block_page")
+        ):
+            r = self._set_dns(fault.params["domain"], fault.params["block_ip"])
+        elif fault.id == "H1" and not fault.params:
+            r = self._run(
+                "backend",
+                "sh",
+                "-c",
+                "killall httpd; while pidof httpd >/dev/null; do sleep 0.1; done",
+            )
+        elif fault.id == "H2" and not fault.params:
+            r = self._set_redirect(True)
+        elif fault.id == "S1" and not fault.params:
+            r = self._set_cert("expired")
+        elif (
+            fault.id == "S2"
+            and set(fault.params) == {"cert_domain"}
+            and fault.params["cert_domain"] in ("shop.lab", "news.lab")
+        ):
+            r = self._set_cert(fault.params["cert_domain"].split(".")[0])
+        elif fault.id == "D3" and not fault.params:
+            r = self._run(
+                "router",
+                "iptables",
+                "-A",
+                "NETRUNNER",
+                "-p",
+                "udp",
+                "-d",
+                self.hosts["dns"],
+                "--dport",
+                "53",
+                "-j",
+                "DROP",
+            )
+        elif fault.id == "D2" and set(fault.params) == {"domain", "ip"}:
             domain, ip = fault.params["domain"], fault.params["ip"]
             try:
                 address = ipaddress.ip_address(ip)
@@ -228,6 +523,12 @@ class DockerLab:
             if not allowed:
                 return LabResult(False, "허용되지 않는 D2 도메인 또는 IP")
             r = self._set_dns(domain, str(address))
+        elif (
+            fault.id == "T1" and fault.params == {"port": 80} and type(fault.params["port"]) is int
+        ):
+            r = self._run(
+                "web", "iptables", "-A", "NETRUNNER", "-p", "tcp", "--dport", "80", "-j", "DROP"
+            )
         elif (
             fault.id == "T2" and fault.params == {"port": 80} and type(fault.params["port"]) is int
         ):
@@ -312,23 +613,195 @@ class DockerLab:
         if not self._target(scenario.target_url) or len(scenario.faults) != 1:
             return LabResult(False, "첫 통합은 허용된 URL의 단일 장애만 지원")
         fault = scenario.faults[0]
-        if fault.id not in ("D2", "T2"):
+        if fault.id not in (
+            "D1",
+            "D2",
+            "D3",
+            "D4",
+            "N1",
+            "N2",
+            "N3",
+            "N4",
+            "S1",
+            "S2",
+            "H1",
+            "H2",
+            "T1",
+            "T2",
+            "B1",
+            "B2",
+        ):
             return LabResult(False, "지원하지 않는 장애")
         domain = scenario.domain
-        primary = self._dns(self.hosts["dns"], domain)
-        alternate = self._dns(self.hosts["alt_dns"], domain)
+        dns_timeout = 5 if fault.id == "D4" else 2
+        primary = self._dns(self.hosts["dns"], domain, dns_timeout)
+        alternate = self._dns(self.hosts["alt_dns"], domain, dns_timeout)
         curl = self._curl(scenario.target_url)
-        capture, path = self._capture(scenario.target_url)
         observations = {
             "dns": primary,
             "alt_dns": alternate,
             "curl": curl,
-            "capture": capture,
-            "pcap": path,
         }
         dns_ok = primary["exit_code"] == alternate["exit_code"] == 0
         alt_ok = alternate["stdout"].strip() == self.config["web_ip"]
-        if fault.id == "D2":
+        if fault.id == "D1":
+            full_dns = self._run(
+                "client", "dig", "+time=2", "+tries=1", "@" + self.hosts["dns"], domain, "A"
+            )
+            observations["full_dns"] = full_dns
+            ok = (
+                dns_ok
+                and alt_ok
+                and full_dns["exit_code"] == 0
+                and "status: NXDOMAIN" in full_dns["stdout"]
+                and curl["exit_code"] == 6
+            )
+        elif fault.id == "N1":
+            ping = self._run("client", "ping", "-c", "4", "-W", "3", self.config["web_ip"])
+            observations["ping"] = ping
+            samples = [
+                float(v) for v in re.findall(r"time[=<](\d+(?:\.\d+)?)\s*ms", ping["stdout"])
+            ]
+            threshold = fault.params["delay_ms"] / 2
+            ok = (
+                dns_ok
+                and alt_ok
+                and ping["exit_code"] == 0
+                and len(samples) >= 4
+                and sum(samples) / len(samples) >= threshold
+            )
+        elif fault.id == "D4":
+            timed_dns = self._dns_timed(self.hosts["dns"], domain)
+            alternate_timed_dns = self._dns_timed(self.hosts["alt_dns"], domain)
+            observations.update(timed_dns=timed_dns, alternate_timed_dns=alternate_timed_dns)
+            match = re.search(r"Query time: (\d+) msec", timed_dns["stdout"])
+            alternate_match = re.search(r"Query time: (\d+) msec", alternate_timed_dns["stdout"])
+            delay = fault.params["delay_ms"]
+            ok = (
+                dns_ok
+                and alt_ok
+                and self.config["web_ip"] in timed_dns["stdout"]
+                and match is not None
+                and int(match.group(1)) >= delay * 0.75
+                and alternate_match is not None
+                and int(alternate_match.group(1)) < delay * 0.5
+            )
+        elif fault.id == "S1":
+            ok = curl["exit_code"] == 60 and "certificate has expired" in curl["stderr"].lower()
+        elif fault.id == "S2":
+            ok = curl["exit_code"] == 60 and "subject name" in curl["stderr"].lower()
+        elif fault.id == "H1":
+            ok = curl["exit_code"] == 0 and curl["stdout"].split()[:1] == ["502"]
+        elif fault.id == "H2":
+            redirects = self._curl(scenario.target_url, "--location", "--max-redirs", "3")
+            observations["redirects"] = redirects
+            ok = redirects["exit_code"] == 47 and curl["stdout"].split()[:1] == ["301"]
+        elif fault.id == "N3":
+            small = self._run("client", "ping", "-c", "2", "-W", "3", self.config["web_ip"])
+            large = self._run(
+                "client",
+                "ping",
+                "-c",
+                "2",
+                "-W",
+                "3",
+                "-s",
+                str(fault.params["min_size"] - 28),
+                self.config["web_ip"],
+            )
+            observations.update(small_ping=small, large_ping=large)
+            large_url = f"http://{domain}/large"
+            large_transfer = self._curl(large_url)
+            observations["large_transfer"] = large_transfer
+            ok = (
+                small["exit_code"] == 0
+                and large["exit_code"] == 1
+                and "100% packet loss" in large["stdout"]
+                and curl["exit_code"] == 0
+                and curl["stdout"].split()[:1] == ["200"]
+                and large_transfer["exit_code"] == 28
+            )
+        elif fault.id == "N2":
+            samples = []
+            # shortcut: 300 probes can miss low loss, increase sample size for tighter confidence.
+            for _ in range(3):
+                ping = self._run(
+                    "client", "ping", "-c", "100", "-i", "0.05", "-W", "3", self.config["web_ip"]
+                )
+                samples.append(ping)
+                match = re.search(r"(\d+(?:\.\d+)?)% packet loss", ping["stdout"])
+                if ping["exit_code"] == 0 and match and float(match.group(1)) > 0:
+                    break
+            observations["ping_samples"] = samples
+            ok = bool(match and float(match.group(1)) > 0 and ping["exit_code"] == 0)
+        elif fault.id == "N4":
+            load_stop = self._stop_load()
+            baseline = self._run(
+                "client", "ping", "-c", "20", "-i", "0.05", "-W", "3", self.config["web_ip"]
+            )
+            load_start = self._start_load()
+            try:
+                loaded = self._run(
+                    "client", "ping", "-c", "20", "-i", "0.05", "-W", "3", self.config["web_ip"]
+                )
+            finally:
+                load_cleanup = self._stop_load()
+            baseline_rtts = [
+                float(v) for v in re.findall(r"time[=<](\d+(?:\.\d+)?)\s*ms", baseline["stdout"])
+            ]
+            loaded_rtts = [
+                float(v) for v in re.findall(r"time[=<](\d+(?:\.\d+)?)\s*ms", loaded["stdout"])
+            ]
+            # shortcut: 20 RTT samples make p95 coarse, increase ping count for stable percentiles.
+            baseline_p95 = (
+                sorted(baseline_rtts)[math.ceil(0.95 * len(baseline_rtts)) - 1]
+                if baseline_rtts
+                else None
+            )
+            loaded_p95 = (
+                sorted(loaded_rtts)[math.ceil(0.95 * len(loaded_rtts)) - 1]
+                if loaded_rtts
+                else None
+            )
+            observations.update(
+                baseline_ping=baseline,
+                loaded_ping=loaded,
+                baseline_p95_ms=baseline_p95,
+                loaded_p95_ms=loaded_p95,
+                load_stop=load_stop,
+                load_start=load_start,
+                load_cleanup=load_cleanup,
+            )
+            ok = (
+                dns_ok
+                and alt_ok
+                and primary["stdout"].strip() == self.config["web_ip"]
+                and curl["exit_code"] == 0
+                and curl["stdout"].split()[:1] == ["200"]
+                and load_stop["exit_code"] == 0
+                and baseline["exit_code"] == 0
+                and load_start["exit_code"] == 0
+                and load_cleanup["exit_code"] == 0
+                and baseline_p95 is not None
+                and loaded_p95 is not None
+                and len(loaded_rtts) >= 10
+                and loaded_p95 >= max(10, baseline_p95 * 3)
+            )
+        elif fault.id == "D3":
+            direct = self._curl(
+                scenario.target_url, "--resolve", f"{domain}:80:{self.config['web_ip']}"
+            )
+            observations["direct_curl"] = direct
+            ok = (
+                primary["exit_code"] == 9
+                and alt_ok
+                and alternate["exit_code"] == 0
+                and "no servers could be reached" in primary["stdout"]
+                and curl["exit_code"] == 28
+                and direct["exit_code"] == 0
+                and direct["stdout"].split()[:1] == ["200"]
+            )
+        elif fault.id == "D2":
             direct = self._curl(
                 scenario.target_url, "--resolve", f"{domain}:80:{self.config['web_ip']}"
             )
@@ -341,26 +814,136 @@ class DockerLab:
                 and direct["exit_code"] == 0
                 and direct["stdout"].split()[:1] == ["200"]
             )
-        else:
+        elif fault.id == "T1":
+            ok = (
+                dns_ok
+                and alt_ok
+                and primary["stdout"].strip() == self.config["web_ip"]
+                and curl["exit_code"] == 28
+            )
+        elif fault.id == "B1":
+            other_domain = next((name for name in self.config["domains"] if name != domain), None)
+            other = self._curl(f"https://{other_domain}/") if other_domain else {"exit_code": 1}
+            observations["other_domain_curl"] = other
+            ok = (
+                dns_ok
+                and alt_ok
+                and primary["stdout"].strip() == self.config["web_ip"]
+                and curl["exit_code"] in (35, 56)
+                and "reset" in curl["stderr"].lower()
+                and other["exit_code"] == 0
+                and other["stdout"].split()[:1] == ["200"]
+            )
+        elif fault.id == "B2":
+            blocked = self._run(
+                "client",
+                "curl",
+                "--noproxy",
+                "*",
+                "--max-time",
+                "5",
+                "-sS",
+                "-w",
+                "\\n%{http_code}",
+                scenario.target_url,
+            )
+            observations["block_page"] = blocked
+            ok = (
+                dns_ok
+                and alt_ok
+                and primary["stdout"].strip() == fault.params["block_ip"]
+                and blocked["exit_code"] == 0
+                and blocked["stdout"].splitlines()[-1:] == ["200"]
+                and "Access blocked by NetRunner lab" in blocked["stdout"]
+            )
+        elif fault.id == "T2":
             ok = (
                 dns_ok
                 and alt_ok
                 and primary["stdout"].strip() == self.config["web_ip"]
                 and curl["exit_code"] == 7
                 and "Connection refused" in curl["stderr"]
-                and "Flags [R" in capture["stdout"]
             )
+        capture, path = self._capture(scenario.target_url)
+        observations.update(capture=capture, pcap=path)
+        if fault.id == "T1":
+            ok = ok and "Flags [S]" in capture["stdout"] and "Flags [R" not in capture["stdout"]
+        elif fault.id == "B1" or fault.id == "T2":
+            ok = ok and "Flags [R" in capture["stdout"]
         ok = ok and capture["exit_code"] == 0 and capture["packets"] > 0 and Path(path).is_file()
         return LabResult(ok, f"{fault.id} 증상 {'재현' if ok else '확인 실패'}", observations)
 
     def reset(self) -> LabResult:
         """캡처를 멈추고 DNS와 방화벽을 정상 설정으로 되돌린다."""
         capture = self._run("client", "sh", "/stop-capture.sh", timeout=10)
-        dns = self._set_dns()
+        load = self._stop_load()
+        netem = self._run(
+            "client",
+            "sh",
+            "-c",
+            "set -e; q=$(tc qdisc show dev eth0); "
+            'case "$q" in *"qdisc netem 10:"*) tc qdisc del dev eth0 root;; esac',
+        )
+        dns_netem = self._run(
+            "dns",
+            "sh",
+            "-c",
+            "q=$(tc qdisc show dev eth0); "
+            'case "$q" in *"qdisc netem 20:"*) tc qdisc del dev eth0 root;; esac',
+        )
+        router_qdisc_script = """\
+set -e
+dev=$(ip route get "$1" | awk '$2 == "dev" {print $3}')
+case "$dev" in eth[0-9]*) ;; *) exit 1;; esac
+q=$(tc qdisc show dev "$dev")
+case "$q" in *"qdisc tbf 30:"*) tc qdisc del dev "$dev" root;; esac
+"""
+        router_qdisc = self._run(
+            "router",
+            "sh",
+            "-c",
+            router_qdisc_script,
+            "sh",
+            self.hosts["client"],
+        )
+        router = self._run("router", "iptables", "-F", "NETRUNNER")
         firewall = self._run("web", "iptables", "-F", "NETRUNNER")
-        ok = capture["exit_code"] == dns["exit_code"] == firewall["exit_code"] == 0
+        backend = self._run(
+            "backend", "sh", "-c", "pidof httpd >/dev/null || httpd -p 8000 -h /www -u nobody"
+        )
+        tls = self._set_cert("valid")
+        redirect = self._set_redirect(False)
+        dns = self._set_dns()
+        ok = all(
+            r["exit_code"] == 0
+            for r in (
+                capture,
+                load,
+                netem,
+                dns_netem,
+                router_qdisc,
+                dns,
+                firewall,
+                router,
+                backend,
+                tls,
+                redirect,
+            )
+        )
         return LabResult(
             ok,
             "초기화 완료" if ok else "초기화 실패",
-            {"capture": capture, "dns": dns, "firewall": firewall},
+            {
+                "capture": capture,
+                "netem": netem,
+                "dns_netem": dns_netem,
+                "load": load,
+                "router_qdisc": router_qdisc,
+                "dns": dns,
+                "firewall": firewall,
+                "router": router,
+                "backend": backend,
+                "tls": tls,
+                "redirect": redirect,
+            },
         )
