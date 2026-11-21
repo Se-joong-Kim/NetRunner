@@ -340,8 +340,11 @@ class DockerLab:
             )
             observations["full_dns"] = full_dns
             ok = (
-                dns_ok and alt_ok and full_dns["exit_code"] == 0
-                and "status: NXDOMAIN" in full_dns["stdout"] and curl["exit_code"] == 6
+                dns_ok
+                and alt_ok
+                and full_dns["exit_code"] == 0
+                and "status: NXDOMAIN" in full_dns["stdout"]
+                and curl["exit_code"] == 6
             )
         elif fault.id == "D2":
             direct = self._curl(
