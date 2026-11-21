@@ -16,7 +16,7 @@ LAB = LabInfo.load(ROOT / "config" / "lab.json")
 
 def test_lab_info_reads_hosts_and_enabled_tools():
     assert LAB.hosts["alt_dns"] == "10.20.0.54"
-    assert LAB.enabled_tools == ["dig", "curl", "capture"]
+    assert LAB.enabled_tools == ["dig", "curl", "capture", "ping"]
 
 
 def test_lab_info_defaults_to_no_tools(tmp_path):

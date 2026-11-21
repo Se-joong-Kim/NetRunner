@@ -28,7 +28,8 @@ def test_invalid_faults_and_urls_never_run_commands(monkeypatch):
     assert not lab.inject(FaultSpec("D2", {"domain": "shop.lab", "ip": "8.8.8.8"})).ok
     assert not lab.inject(FaultSpec("D2", {"domain": "shop.lab", "ip": "10.20.0.10"})).ok
     assert not lab.inject(FaultSpec("T2", {"port": 443})).ok
-    assert not lab.inject(FaultSpec("N1", {"delay_ms": 100})).ok
+    assert not lab.inject(FaultSpec("N1", {"delay_ms": 19})).ok
+    assert not lab.inject(FaultSpec("N1", {"delay_ms": True})).ok
     assert not lab.health_check("http://example.com/").ok
     assert not lab.health_check("http://shop.lab:0/").ok
 
@@ -59,7 +60,36 @@ def test_reset_attempts_firewall_even_if_dns_fails(monkeypatch):
     monkeypatch.setattr(lab, "_set_dns", lambda: {"exit_code": 1})
     monkeypatch.setattr(lab, "_run", lambda *args, **kw: calls.append(args) or {"exit_code": 0})
     assert not lab.reset().ok
-    assert calls == [("client", "sh", "/stop-capture.sh"), ("web", "iptables", "-F", "NETRUNNER")]
+    assert calls[0] == ("client", "sh", "/stop-capture.sh")
+    assert calls[1][:3] == ("client", "sh", "-c")
+    assert calls[2:] == [
+        ("router", "iptables", "-F", "NETRUNNER"),
+        ("web", "iptables", "-F", "NETRUNNER"),
+    ]
+
+
+def test_d3_accepts_no_parameters(monkeypatch):
+    lab = DockerLab()
+    calls = []
+    monkeypatch.setattr(lab, "_run", lambda *args, **kw: calls.append(args) or {"exit_code": 0})
+    assert not lab.inject(FaultSpec("D3", {"x": 1})).ok
+    assert lab.inject(FaultSpec("D3", {})).ok
+    assert calls == [
+        (
+            "router",
+            "iptables",
+            "-A",
+            "NETRUNNER",
+            "-p",
+            "udp",
+            "-d",
+            lab.hosts["dns"],
+            "--dport",
+            "53",
+            "-j",
+            "DROP",
+        )
+    ]
 
 
 def test_timeout_preserves_partial_output(monkeypatch):
@@ -213,6 +243,7 @@ def test_real_probe_outputs():
         ("dig", {"domain": "shop.lab", "server": "alt_dns"}),
         ("curl", {"url": "http://shop.lab/"}),
         ("capture", {"url": "http://shop.lab/"}),
+        ("ping", {"host": "10.20.0.10", "count": 2}),
     ):
         result = lab.run_probe(tool, args)
         assert result.ok, result.error
@@ -245,8 +276,19 @@ def test_real_lab_recovers_after_each_fault(filename):
 
 
 @pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
-@pytest.mark.parametrize("filename", ["fs01_d1_shop", "fs02_d1_news"])
-def test_real_d1_recovers(filename):
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "fs01_d1_shop",
+        "fs02_d1_news",
+        "fs05_d3_shop",
+        "fs06_d3_news",
+        "fs09_n1_shop",
+        "fs10_n1_news",
+        "fs11_n1_shop_long",
+    ],
+)
+def test_real_dns_fault_recovers(filename):
     lab = DockerLab()
     scenario = Scenario.from_dict(
         read_json(ROOT / "fixtures/fixed_set" / f"{filename}.scenario.json")

@@ -11,6 +11,7 @@ services:
     image: netrunner-lab
     build: ./lab
     command: [router]
+    cap_add: [NET_ADMIN]
     sysctls:
       net.ipv4.ip_forward: 1
     networks:

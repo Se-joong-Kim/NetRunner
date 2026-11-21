@@ -41,7 +41,7 @@ class DockerLab:
 
     def run_probe(self, tool: str, args: dict) -> ProbeResult:
         """클라이언트에서 허용된 검사 도구를 실행한다."""
-        if tool not in {"dig", "curl", "capture"}:
+        if tool not in {"dig", "curl", "capture", "ping"}:
             return ProbeResult(False, error="지원하지 않는 검사 도구")
         error = check_args(tool, args, self.lab_info)
         if error:
@@ -53,7 +53,13 @@ class DockerLab:
             return ProbeResult(
                 True, result["output"], result["elapsed_ms"], result["packets"], path
             )
-        if tool == "dig":
+        if tool == "ping":
+            result = self._run(
+                "client", "ping", "-c", str(args.get("count", 4)), "-W", "3", args["host"]
+            )
+            ok = result["exit_code"] in (0, 1)
+            output = result["stdout"] + result["stderr"]
+        elif tool == "dig":
             server = args.get("server", "dns")
             server = self.hosts.get(server, server)
             result = self._run(
@@ -218,6 +224,47 @@ class DockerLab:
             and fault.params["domain"] in self.config["domains"]
         ):
             r = self._set_dns(fault.params["domain"])
+        elif (
+            fault.id == "N1"
+            and set(fault.params) in ({"delay_ms"}, {"delay_ms", "jitter_ms"})
+            and type(fault.params["delay_ms"]) is int
+            and 20 <= fault.params["delay_ms"] <= 2000
+            and type(fault.params.get("jitter_ms", 0)) is int
+            and 0 <= fault.params.get("jitter_ms", 0) <= 500
+        ):
+            delay = str(fault.params["delay_ms"]) + "ms"
+            jitter = fault.params.get("jitter_ms", 0)
+            args = [str(jitter) + "ms"] if jitter else []
+            r = self._run(
+                "client",
+                "tc",
+                "qdisc",
+                "add",
+                "dev",
+                "eth0",
+                "root",
+                "handle",
+                "10:",
+                "netem",
+                "delay",
+                delay,
+                *args,
+            )
+        elif fault.id == "D3" and not fault.params:
+            r = self._run(
+                "router",
+                "iptables",
+                "-A",
+                "NETRUNNER",
+                "-p",
+                "udp",
+                "-d",
+                self.hosts["dns"],
+                "--dport",
+                "53",
+                "-j",
+                "DROP",
+            )
         elif fault.id == "D2" and set(fault.params) == {"domain", "ip"}:
             domain, ip = fault.params["domain"], fault.params["ip"]
             try:
@@ -318,7 +365,7 @@ class DockerLab:
         if not self._target(scenario.target_url) or len(scenario.faults) != 1:
             return LabResult(False, "첫 통합은 허용된 URL의 단일 장애만 지원")
         fault = scenario.faults[0]
-        if fault.id not in ("D1", "D2", "T2"):
+        if fault.id not in ("D1", "D2", "D3", "N1", "T2"):
             return LabResult(False, "지원하지 않는 장애")
         domain = scenario.domain
         primary = self._dns(self.hosts["dns"], domain)
@@ -345,6 +392,34 @@ class DockerLab:
                 and full_dns["exit_code"] == 0
                 and "status: NXDOMAIN" in full_dns["stdout"]
                 and curl["exit_code"] == 6
+            )
+        elif fault.id == "N1":
+            ping = self._run("client", "ping", "-c", "4", "-W", "3", self.config["web_ip"])
+            observations["ping"] = ping
+            samples = [
+                float(v) for v in re.findall(r"time[=<](\d+(?:\.\d+)?)\s*ms", ping["stdout"])
+            ]
+            threshold = fault.params["delay_ms"] / 2
+            ok = (
+                dns_ok
+                and alt_ok
+                and ping["exit_code"] == 0
+                and len(samples) >= 4
+                and sum(samples) / len(samples) >= threshold
+            )
+        elif fault.id == "D3":
+            direct = self._curl(
+                scenario.target_url, "--resolve", f"{domain}:80:{self.config['web_ip']}"
+            )
+            observations["direct_curl"] = direct
+            ok = (
+                primary["exit_code"] == 9
+                and alt_ok
+                and alternate["exit_code"] == 0
+                and "no servers could be reached" in primary["stdout"]
+                and curl["exit_code"] == 28
+                and direct["exit_code"] == 0
+                and direct["stdout"].split()[:1] == ["200"]
             )
         elif fault.id == "D2":
             direct = self._curl(
@@ -374,11 +449,25 @@ class DockerLab:
     def reset(self) -> LabResult:
         """캡처를 멈추고 DNS와 방화벽을 정상 설정으로 되돌린다."""
         capture = self._run("client", "sh", "/stop-capture.sh", timeout=10)
+        netem = self._run(
+            "client",
+            "sh",
+            "-c",
+            "set -e; q=$(tc qdisc show dev eth0); "
+            'case "$q" in *"qdisc netem 10:"*) tc qdisc del dev eth0 root;; esac',
+        )
+        router = self._run("router", "iptables", "-F", "NETRUNNER")
         dns = self._set_dns()
         firewall = self._run("web", "iptables", "-F", "NETRUNNER")
-        ok = capture["exit_code"] == dns["exit_code"] == firewall["exit_code"] == 0
+        ok = all(r["exit_code"] == 0 for r in (capture, netem, dns, firewall, router))
         return LabResult(
             ok,
             "초기화 완료" if ok else "초기화 실패",
-            {"capture": capture, "dns": dns, "firewall": firewall},
+            {
+                "capture": capture,
+                "netem": netem,
+                "dns": dns,
+                "firewall": firewall,
+                "router": router,
+            },
         )

@@ -11,6 +11,6 @@
     "alt_dns": "10.20.0.54",
     "web": "10.20.0.10"
   },
-  "enabled_faults": ["D1", "D2", "T2"],
-  "enabled_tools": ["dig", "curl", "capture"]
+  "enabled_faults": ["D1", "D2", "D3", "N1", "T2"],
+  "enabled_tools": ["dig", "curl", "capture", "ping"]
 }

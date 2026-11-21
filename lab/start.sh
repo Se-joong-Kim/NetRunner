@@ -4,6 +4,8 @@ set -eu
 case "$1" in
   router)
     ip route del default 2>/dev/null || true
+    iptables -N NETRUNNER
+    iptables -I FORWARD -j NETRUNNER
     exec sleep infinity
     ;;
   client)
