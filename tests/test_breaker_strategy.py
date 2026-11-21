@@ -76,7 +76,9 @@ def test_units_are_enabled_faults_with_the_empty_and_host_address_classes():
 
 
 def test_host_addresses_are_the_lab_hosts_in_the_subnet_minus_the_web_server():
-    assert host_addresses(LAB) == frozenset({"10.20.0.53", "10.20.0.54", "10.20.0.254"})
+    assert host_addresses(LAB) == frozenset(
+        {"10.20.0.12", "10.20.0.53", "10.20.0.54", "10.20.0.254"}
+    )
 
 
 def test_host_address_belongs_to_its_own_class_and_is_a_unit():

@@ -25,8 +25,23 @@ case "$1" in
     ip route replace 10.21.0.0/24 via 10.20.0.254
     iptables -N NETRUNNER
     iptables -I INPUT -j NETRUNNER
+    cp /certs/valid.crt /tmp/server.crt
+    : > /tmp/redirect.conf
+    exec su-exec nobody:nogroup nginx -c /nginx.conf -g 'daemon off;'
+    ;;
+  backend)
+    ip route del default 2>/dev/null || true
+    ip route replace 10.21.0.0/24 via 10.20.0.254
     mkdir -p /www
     printf 'NetRunner lab\n' > /www/index.html
+    dd if=/dev/zero of=/www/large bs=1024 count=64 2>/dev/null
+    httpd -p 8000 -h /www -u nobody
+    exec sleep infinity
+    ;;
+  blockpage)
+    ip route del default 2>/dev/null || true
+    mkdir -p /www
+    printf 'Access blocked by NetRunner lab\n' > /www/index.html
     exec httpd -f -p 80 -h /www -u nobody
     ;;
 esac

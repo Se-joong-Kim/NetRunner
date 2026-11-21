@@ -75,6 +75,8 @@ def test_check_args_rejects(tool, args):
 def test_bool_is_not_an_int():
     assert check_args("openssl", {"host": "shop.lab", "port": True}, LAB)
     assert check_args("ping", {"host": "shop.lab", "count": False}, LAB)
+    assert check_args("ping", {"host": "shop.lab", "size": 1473}, LAB)
+    assert not check_args("ping", {"host": "shop.lab", "size": 1472}, LAB)
 
 
 def _cause_words_in(text: str) -> list[str]:
