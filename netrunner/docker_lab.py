@@ -67,7 +67,7 @@ class DockerLab:
             output = result["stdout"] + result["stderr"]
         elif tool == "openssl":
             script = (
-                'out=$(mktemp) || exit 1; trap \'rm -f "$out"\' EXIT; '
+                "out=$(mktemp) || exit 1; trap 'rm -f \"$out\"' EXIT; "
                 'openssl s_client -connect "$1:$2" -servername "$3" -verify 5 -showcerts '
                 '</dev/null >"$out" 2>&1 || true; '
                 'openssl x509 -in "$out" -noout -subject -issuer -dates 2>&1; '
