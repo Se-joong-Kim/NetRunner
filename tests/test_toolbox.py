@@ -55,7 +55,6 @@ def test_call_runs_and_records_with_ids():
     [
         ("rm", {}, ALL),
         ("dig", DIG, frozenset()),
-        ("openssl", {"host": "shop.lab"}, ALL),
         ("dig", {"domain": "example.com"}, ALL),
     ],
 )

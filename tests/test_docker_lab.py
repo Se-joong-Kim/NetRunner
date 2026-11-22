@@ -255,7 +255,9 @@ def test_real_probe_outputs():
         ("dig", {"domain": "shop.lab", "server": "alt_dns"}),
         ("curl", {"url": "http://shop.lab/"}),
         ("capture", {"url": "http://shop.lab/"}),
+        ("openssl", {"host": "shop.lab"}),
         ("ping", {"host": "10.20.0.10", "count": 2}),
+        ("tracepath", {"host": "10.20.0.10"}),
     ):
         result = lab.run_probe(tool, args)
         assert result.ok, result.error
