@@ -32,6 +32,7 @@ from .report import (
     summarize,
     summarize_breaker,
 )
+from .rule_diagnoser import RuleDiagnoser
 from .toolbox import Toolbox
 from .validate import LabInfo, lab_url_error, validate
 
@@ -85,18 +86,26 @@ class NoDiagnosis:
 
 # match와 run에 꽂을 진단기. 인자는 명령줄 인자다. 새 Diagnoser는 여기에 한 줄 추가한다.
 GLM_C = "glm-c"
+RULES = "rules"
 DIAGNOSER_IMPLS: dict[str, Callable[[argparse.Namespace], Diagnoser]] = {
     "none": lambda _args: NoDiagnosis(),
     GLM_C: lambda args: GlmDiagnoser.from_opencode(args.opencode, model=args.model),
+    RULES: lambda _args: RuleDiagnoser(),
 }
+# 실험망이 검사를 실행해야 진단할 수 있는 진단기
+NEEDS_PROBES: frozenset[str] = frozenset({GLM_C, RULES})
 # run에서 저장된 진단을 재생하는 모드의 이름. 다른 진단기와 섞지 않는다.
 REPLAY = "replay"
 
 
 def _diagnoser_needs_runner(names: list[str], impl: str) -> bool:
-    if GLM_C not in names or impl in PROBES_FROM_LAB:
+    needing = sorted(NEEDS_PROBES.intersection(names))
+    if not needing or impl in PROBES_FROM_LAB:
         return False
-    print(f"{GLM_C}: {impl} 실험망에 검사 실행기가 연결되지 않았습니다.", file=sys.stderr)
+    print(
+        f"{', '.join(needing)}: {impl} 실험망에 검사 실행기가 연결되지 않았습니다.",
+        file=sys.stderr,
+    )
     return True
 
 
