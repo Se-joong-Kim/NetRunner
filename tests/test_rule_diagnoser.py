@@ -293,6 +293,21 @@ def test_late_reply_seen_only_in_capture_is_dns_delay():
     assert "2.5초" in diagnosis.findings[0].evidence[0].claim
 
 
+def test_late_reply_is_paired_with_its_own_query():
+    # 캡처를 시작하기 전에 보낸 질의(이전 dig)의 응답이 맨 앞에 찍힐 수 있다.
+    stray = "11:42:04.527807 IP 10.20.0.53.53 > 10.21.0.2.34501: 49458* 1/0/1 A 10.20.0.10 (53)"
+    query = "11:42:05.229561 IP 10.21.0.2.48362 > 10.20.0.53.53: 44678+ [1au] A? shop.lab. (49)"
+    reply = "11:42:07.729739 IP 10.20.0.53.53 > 10.21.0.2.48362: 44678* 1/0/1 A 10.20.0.10 (53)"
+    lab = FakeLab(
+        dig__dns=dig_timeout("dns"), curl=RESOLVE_TIMEOUT, capture=capture(stray, query, reply)
+    )
+    diagnosis, tools = run(lab)
+    (probe,) = [p for p in tools.probes() if p.tool == "capture"]
+    (ev,) = diagnosis.findings[0].evidence
+    assert ev.ref == f"pcap:{probe.probe_id}#3"
+    assert "질의 2.5초 뒤에" in ev.claim
+
+
 def test_capture_without_any_reply_keeps_server_unresponsive():
     lab = FakeLab(dig__dns=dig_timeout("dns"), curl=RESOLVE_TIMEOUT, capture=capture(QUERY, RETRY))
     diagnosis, tools = run(lab)

@@ -300,15 +300,25 @@ def _late_dns_reply(probes: _Probes, url: str, primary: Seen) -> Finding | None:
     if not server or not cap:
         return None
     dns = f"{server.group(1)}.53"
-    packets = re.findall(r"(?m)^#(\d+) (\d+):(\d+):([\d.]+) IP (\S+) > ([^\s:]+):", cap.output)
-    times = {n: int(h) * 3600 + int(m) * 60 + float(s) for n, h, m, s, _, _ in packets}
-    query = next((n for n, *_, src, dst in packets if dst == dns), None)
-    reply = next((n for n, *_, src, dst in packets if src == dns), None)
-    if reply is None:
+    asked: dict[tuple[str, str], float] = {}  # (클라이언트 주소.포트, DNS ID) → 질의 시각
+    replies: list[tuple[str, tuple[str, str], float]] = []
+    for n, h, m, s, src, dst, dns_id in re.findall(
+        r"(?m)^#(\d+) (\d+):(\d+):([\d.]+) IP (\S+) > ([^\s:]+): (\d+)", cap.output
+    ):
+        at = int(h) * 3600 + int(m) * 60 + float(s)
+        if dst == dns:
+            asked.setdefault((src, dns_id), at)
+        elif src == dns:
+            replies.append((n, (dst, dns_id), at))
+    if not replies:
         return None
-    waited = f" 질의 {times[reply] - times[query]:.1f}초 뒤에" if query else ""
-    claim = f"dig와 접속 요청은 시간 초과했지만, 캡처에는 기본 DNS 응답이{waited} 도착함"
-    return _finding("D4", cap, claim, ref=cap.packet(int(reply)))
+    # 캡처 안의 질의와 짝지어지는 응답을 먼저 쓴다. 캡처 전에 보낸 질의(이전
+    # dig)의 응답도 늦은 응답이지만 얼마나 늦었는지는 잴 수 없다.
+    paired = [(n, at - asked[key]) for n, key, at in replies if key in asked]
+    number, waited = paired[0] if paired else (replies[0][0], None)
+    when = f" 질의 {waited:.1f}초 뒤에" if waited is not None else ""
+    claim = f"dig와 접속 요청은 시간 초과했지만, 캡처에는 기본 DNS 응답이{when} 도착함"
+    return _finding("D4", cap, claim, ref=cap.packet(int(number)))
 
 
 def _path_findings(small: Seen | None, big: Seen | None) -> tuple[list[Finding], _Path]:
