@@ -105,6 +105,69 @@ def test_zero_model_budget_does_not_call_opencode():
     model.assert_not_called()
 
 
+def test_normal_observation_is_not_scored_as_an_extra_fault():
+    observations = [
+        {"stage": "DNS", "cause": " 정상 ", "evidence": []},
+        {"stage": "TCP", "cause": "연결 거부", "evidence": ["probe:p1"]},
+    ]
+    diagnoser, _ = model_with_responses({"check": "http"}, {"findings": observations})
+    runner = Mock()
+    runner.run_probe.return_value = ProbeResult(True, "curl: Connection refused")
+    scenario = Scenario.from_dict(
+        {
+            "scenario_id": "normal-dns",
+            "target_url": "http://shop.lab/",
+            "complaint": "접속 실패",
+            "faults": [{"id": "T2", "params": {"port": 80}}],
+        }
+    )
+    referee = Referee(MockLab(), diagnoser, LabInfo.load(ROOT / "config/lab.json"), runner=runner)
+
+    record = referee.run_round(scenario)
+
+    assert record["status"] == "scored"
+    assert record["score"]["false_positives"] == []
+    assert record["score"]["faults"][0]["verdict"] == "correct"
+
+
+def test_empty_result_after_normal_dns_prompts_for_remaining_http_check():
+    finding = {"stage": "TCP", "cause": "연결 거부", "evidence": ["probe:p2"]}
+    diagnoser, model = model_with_responses(
+        {"check": "dns"}, {"findings": []}, {"check": "http"}, {"findings": [finding]}
+    )
+    runner = Mock()
+    runner.run_probe.side_effect = [
+        ProbeResult(True, "shop.lab. 60 IN A 10.20.0.10"),
+        ProbeResult(True, "curl: Connection refused"),
+    ]
+    limits = Limits()
+    lab = LabInfo.load(ROOT / "config/lab.json")
+    toolbox = Toolbox(runner, lab, limits, frozenset({"dig", "curl"}))
+
+    result = diagnoser.diagnose(RoundBrief("r1", "http://shop.lab/", "접속 실패", limits), toolbox)
+
+    assert result.findings[0].evidence[0].ref == "probe:p2"
+    assert [call.args[0] for call in runner.run_probe.call_args_list] == ["dig", "curl"]
+    assert "아직 실행하지 않은 검사" in model.call_args_list[2].kwargs["input"]
+
+
+@pytest.mark.parametrize(("tool_limit", "expected_calls"), [(0, 1), (1, 2)])
+def test_empty_result_retries_at_most_once_and_only_when_checks_are_available(
+    tool_limit, expected_calls
+):
+    diagnoser, model = model_with_responses({"findings": []}, {"findings": []})
+    runner = Mock()
+    limits = Limits(max_tool_calls=tool_limit)
+    lab = LabInfo.load(ROOT / "config/lab.json")
+    toolbox = Toolbox(runner, lab, limits, frozenset({"curl"}))
+
+    result = diagnoser.diagnose(RoundBrief("r1", "http://shop.lab/", "접속 실패", limits), toolbox)
+
+    assert result.findings == []
+    assert model.call_count == expected_calls
+    runner.run_probe.assert_not_called()
+
+
 def test_retries_invalid_json_without_repeating_probes():
     invalid = "이 응답은 올바른 JSON이 아닙니다"
     finding = {"stage": "TCP", "cause": "연결 거부", "evidence": ["probe:p1"]}

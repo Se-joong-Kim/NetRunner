@@ -113,6 +113,8 @@ class GlmDiagnoser:
         probe_ids: set[str] = set()
         format_retry_used = False
         retry_instruction = ""
+        empty_retry_used = False
+        check_instruction = ""
 
         while result.llm_calls < brief.limits.max_llm_calls:
             remaining = brief.limits.max_seconds - (time.monotonic() - started)
@@ -134,8 +136,12 @@ class GlmDiagnoser:
                 '{"findings":[{"stage":"DNS","cause":"잘못된 주소","evidence":'
                 '[{"ref":"probe:p1","claim":"관측한 사실"}]}]}. '
                 "TCP 연결 거부는 stage TCP, cause 연결 거부를 사용한다. "
-                '실제 관측으로 결론을 내릴 수 없으면 {"findings":[]}를 반환한다.\n'
+                "findings에는 확인된 장애 원인만 넣는다. 정상 상태는 관측일 뿐 장애가 아니다. "
+                "DNS 응답이 정상이어도 접속이 실패하는 원인은 남아 있으므로 http를 확인한다. "
+                "결론을 내리기 어렵고 available_checks에 남은 검사가 있으면 먼저 검사한다. "
+                '검사 후에도 장애 원인을 확인할 수 없으면 {"findings":[]}를 반환한다.\n'
                 + retry_instruction
+                + check_instruction
                 + json.dumps(data, ensure_ascii=False)
             )
             complete = replace(self._complete, timeout=min(remaining, self._complete.timeout))
@@ -154,16 +160,29 @@ class GlmDiagnoser:
                 )
                 continue
             retry_instruction = ""
+            check_instruction = ""
 
             if set(action) == {"findings"}:
                 if not isinstance(action["findings"], list):
                     raise ContractError("findings는 목록이어야 함")
                 findings = [Finding.from_dict(item) for item in action["findings"]]
+                findings = [
+                    finding
+                    for finding in findings
+                    if finding.cause.strip().casefold() not in {"정상", "normal", "ok"}
+                ]
                 if any(
                     not finding.evidence or any(ev.ref not in probe_ids for ev in finding.evidence)
                     for finding in findings
                 ):
                     raise ContractError("이번 라운드에서 실행한 검사만 근거로 인용할 수 있음")
+                if not findings and offered and not empty_retry_used:
+                    empty_retry_used = True
+                    check_instruction = (
+                        "직전 결론에는 확인된 장애 원인이 없다. "
+                        "available_checks에서 아직 실행하지 않은 검사 하나를 선택한다.\n"
+                    )
+                    continue
                 result.findings = findings
                 break
 
