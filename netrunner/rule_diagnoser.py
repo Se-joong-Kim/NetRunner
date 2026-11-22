@@ -10,13 +10,14 @@ LLM을 쓰지 않는다. 심판이 넘긴 라운드 정보(RoundBrief)와 도구
   1. dig: 기본 DNS, 보조 DNS
   2. curl: 대상 URL
   3. ping: 보조 DNS가 알려 준 주소로 작은 패킷, 큰 패킷
-  4. 필요할 때만: 기본 DNS 재질의, 기본 DNS가 준 주소로 HTTP 요청,
-     리다이렉트 따라가기
+  4. 필요할 때만: 기본 DNS 재질의, 캡처(기본 DNS만 무응답일 때),
+     기본 DNS가 준 주소로 HTTP 요청, 리다이렉트 따라가기
 
 규칙(단계 순서)
   DNS   NXDOMAIN → 이름 없음. 보조 DNS는 답하는데 기본 DNS만 두 번
         무응답 → 서버 무응답. 이때 접속 요청의 이름 확인이 느리게라도
-        성공하면 지연, 빠르게 성공하면 일시적 손실로 보고 넘긴다.
+        성공하거나 캡처에 늦은 응답이 보이면 지연, 이름 확인이 빠르게
+        성공하면 일시적 손실로 보고 넘긴다.
         보조 DNS와 다른 주소 → 그 주소가 웹 페이지를 주면 DNS 변조,
         아니면 잘못된 주소. 보조 DNS보다 100ms 이상 느림 → 지연.
         경로가 느리면 DNS 쪽 원인은 내지 않고 경로 탓으로 본다.
@@ -57,10 +58,19 @@ MAX_REDIRECTS = 5
 
 @dataclass(frozen=True)
 class Seen:
-    """실행된 검사 하나: 인용 참조와 원본 출력."""
+    """실행된 검사 하나: 검사 번호와 원본 출력."""
 
-    ref: str
+    probe_id: str
     output: str
+
+    @property
+    def ref(self) -> str:
+        """검사 전체를 가리키는 근거 참조."""
+        return f"probe:{self.probe_id}"
+
+    def packet(self, number: int) -> str:
+        """캡처의 패킷 하나를 가리키는 근거 참조."""
+        return f"pcap:{self.probe_id}#{number}"
 
 
 @dataclass(frozen=True)
@@ -136,9 +146,9 @@ def read_ping(output: str) -> PingView:
     return PingView(sent, received, float(rtt.group(1)) if rtt else None)
 
 
-def _finding(fault_id: str, seen: Seen, claim: str) -> Finding:
+def _finding(fault_id: str, seen: Seen, claim: str, ref: str | None = None) -> Finding:
     fault = FAULTS[fault_id]
-    return Finding(fault.stage, fault.cause, [Evidence(seen.ref, claim)])
+    return Finding(fault.stage, fault.cause, [Evidence(ref or seen.ref, claim)])
 
 
 class _Probes:
@@ -152,7 +162,7 @@ class _Probes:
         if tool not in self._available or not self._tools.remaining():
             return None
         view = self._tools.call(tool, args)
-        return Seen(f"probe:{view.probe_id}", view.output) if view.probe_id else None
+        return Seen(view.probe_id, view.output) if view.probe_id else None
 
 
 @dataclass(frozen=True)
@@ -186,7 +196,7 @@ class RuleDiagnoser:
         )
 
         path_findings, path = _path_findings(small, big)
-        findings, blocked = _dns_findings(probes, host, primary, alt, web, path)
+        findings, blocked = _dns_findings(probes, url, primary, alt, web, path)
         findings += path_findings
         if not blocked:
             findings += _connection_findings(probes, url, web, path)
@@ -206,7 +216,7 @@ def _path_host(host: str, primary: Seen | None, alt: Seen | None) -> str:
 
 def _dns_findings(
     probes: _Probes,
-    host: str,
+    url: str,
     primary: Seen | None,
     alt: Seen | None,
     web: Seen | None,
@@ -215,6 +225,7 @@ def _dns_findings(
     """DNS 단계 규칙. (진단, 뒤 단계가 막혔는지)를 돌려준다."""
     if primary is None:
         return [], False
+    host = urlsplit(url).hostname or ""
     p = read_dig(primary.output)
     a = read_dig(alt.output) if alt else None
     alt_answers = bool(a and a.addresses)
@@ -227,7 +238,7 @@ def _dns_findings(
         if retry and not read_dig(retry.output).timed_out:
             primary, p = retry, read_dig(retry.output)
         else:
-            return _dns_timeout(retry or primary, web, alt_answers, path)
+            return _dns_timeout(probes, url, retry or primary, web, alt_answers, path)
 
     if p.addresses and alt_answers and p.addresses != a.addresses:
         ip = min(p.addresses)
@@ -253,9 +264,14 @@ def _dns_findings(
 
 
 def _dns_timeout(
-    primary: Seen, web: Seen | None, alt_answers: bool, path: _Path
+    probes: _Probes,
+    url: str,
+    primary: Seen,
+    web: Seen | None,
+    alt_answers: bool,
+    path: _Path,
 ) -> tuple[list[Finding], bool]:
-    """기본 DNS가 두 번 다 시간 초과했을 때. 접속 요청의 이름 확인으로 가른다."""
+    """기본 DNS가 두 번 다 시간 초과했을 때. 이름 확인과 캡처로 가른다."""
     if not alt_answers or path.delayed:
         return [], False  # 보조 DNS도 답이 없거나 경로가 느리면 DNS만의 문제로 좁히지 않는다
     w = read_curl(web.output) if web else None
@@ -267,7 +283,32 @@ def _dns_timeout(
             f"이름 확인에 {w.lookup_s:.1f}초 걸려 성공"
         )
         return [_finding("D4", web, claim)], False
+    late = _late_dns_reply(probes, url, primary)
+    if late:
+        return [late], False
     return [_finding("D3", primary, "기본 DNS가 두 번 모두 응답하지 않음(보조 DNS는 응답)")], True
+
+
+def _late_dns_reply(probes: _Probes, url: str, primary: Seen) -> Finding | None:
+    """캡처에서 기본 DNS의 늦은 응답을 찾는다. 있으면 DNS 지연이다.
+
+    지연이 클라이언트의 재질의 간격보다 길면 dig와 접속 요청은 응답을
+    받지 못하지만, 캡처는 요청이 끝난 뒤에도 잠시 패킷을 기록한다.
+    """
+    server = re.search(r"(\d+\.\d+\.\d+\.\d+)#53", primary.output)
+    cap = probes.run("capture", {"url": url}) if server else None
+    if not server or not cap:
+        return None
+    dns = f"{server.group(1)}.53"
+    packets = re.findall(r"(?m)^#(\d+) (\d+):(\d+):([\d.]+) IP (\S+) > ([^\s:]+):", cap.output)
+    times = {n: int(h) * 3600 + int(m) * 60 + float(s) for n, h, m, s, _, _ in packets}
+    query = next((n for n, *_, src, dst in packets if dst == dns), None)
+    reply = next((n for n, *_, src, dst in packets if src == dns), None)
+    if reply is None:
+        return None
+    waited = f" 질의 {times[reply] - times[query]:.1f}초 뒤에" if query else ""
+    claim = f"dig와 접속 요청은 시간 초과했지만, 캡처에는 기본 DNS 응답이{waited} 도착함"
+    return _finding("D4", cap, claim, ref=cap.packet(int(reply)))
 
 
 def _path_findings(small: Seen | None, big: Seen | None) -> tuple[list[Finding], _Path]:

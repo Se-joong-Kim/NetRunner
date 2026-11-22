@@ -266,6 +266,41 @@ def test_primary_timeout_but_slow_successful_lookup_is_dns_delay():
     assert cited(diagnosis, tools) == [("curl", "")]
 
 
+def capture(*lines: str) -> str:
+    return "".join(f"#{i} {line}\n" for i, line in enumerate(lines, 1))
+
+
+QUERY = "11:37:16.809191 IP 10.21.0.2.45483 > 10.20.0.53.53: 43002+ [1au] A? shop.lab. (49)"
+RETRY = "11:37:18.810652 IP 10.21.0.2.51874 > 10.20.0.53.53: 43002+ [1au] A? shop.lab. (49)"
+LATE_REPLY = "11:37:19.309432 IP 10.20.0.53.53 > 10.21.0.2.45483: 43002* 1/0/1 A 10.20.0.10 (53)"
+RESOLVE_TIMEOUT = curl_error(28, "Resolving timed out after 5001 milliseconds", lookup=0.0)
+
+
+def test_late_reply_seen_only_in_capture_is_dns_delay():
+    # 지연이 클라이언트의 재질의 간격보다 길면 dig와 curl 모두 응답을 받지 못한다.
+    # 캡처에는 늦게 도착한 응답이 남는다.
+    lab = FakeLab(
+        dig__dns=dig_timeout("dns"),
+        curl=RESOLVE_TIMEOUT,
+        capture=capture(QUERY, RETRY, LATE_REPLY),
+    )
+    diagnosis, tools = run(lab)
+    assert labels(diagnosis) == [FAULTS["D4"].label]
+    (probe,) = [p for p in tools.probes() if p.tool == "capture"]
+    assert [ev.ref for f in diagnosis.findings for ev in f.evidence] == [
+        f"pcap:{probe.probe_id}#3"
+    ]
+    assert "2.5초" in diagnosis.findings[0].evidence[0].claim
+
+
+def test_capture_without_any_reply_keeps_server_unresponsive():
+    lab = FakeLab(dig__dns=dig_timeout("dns"), curl=RESOLVE_TIMEOUT, capture=capture(QUERY, RETRY))
+    diagnosis, tools = run(lab)
+    assert labels(diagnosis) == [FAULTS["D3"].label]
+    assert "capture" in [t for t, _ in lab.calls]
+    assert cited(diagnosis, tools) == [("dig", "dns")]
+
+
 def test_both_dns_servers_slow_is_not_dns_delay():
     lab = FakeLab(dig__dns=dig(ms=210), dig__alt_dns=dig("alt_dns", ms=205))
     diagnosis, _ = run(lab)
