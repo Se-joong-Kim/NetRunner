@@ -48,7 +48,7 @@ python -m pytest tests                          # 심판 테스트
 
 ## 2. 심판 ↔ 실험망: `Lab` 인터페이스
 
-`netrunner/lab.py`의 `Lab`을 만족하는 `netrunner/docker_lab.py`의 `DockerLab`은 D2와 T2를 지원한다. `MockLab`은 모의 실행에 사용한다.
+`netrunner/lab.py`의 `Lab`을 만족하는 `netrunner/docker_lab.py`의 `DockerLab`은 아래 "장애 목록"의 16종을 단일 장애로 지원한다(#63). 복합 장애는 아직 지원하지 않는다. `MockLab`은 모의 실행에 사용한다.
 
 | 함수 | 하는 일 | 반환 |
 |---|---|---|
@@ -227,7 +227,7 @@ Diagnoser는 검사를 **심판이 라운드마다 만들어 넘기는 도구 �
 | B1 | 차단 / SNI 기반 | domain | O |
 | B2 | 차단 / DNS 변조 | domain, block_ip | O |
 
-구현 순서: 11주차에는 D2, T2(첫 통합)부터 시작해 D1, D3, N1, S1, H1을 추가한다. 12주차에 TLS, HTTP, 경로 장애로 넓히고, 13주차에 전체 목록을 구현한다.
+구현 순서: D2, T2(첫 통합)부터 시작해 D1, D3, N1, S1, H1을 추가하고, TLS, HTTP, 경로 장애로 넓혀 전체 목록을 구현한다. 2026-11-21에 16종 단일 장애를 모두 구현했다(#63). 복합 장애는 후속이다.
 
 ## 회의에서 정할 것
 

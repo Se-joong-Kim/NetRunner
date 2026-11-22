@@ -52,7 +52,7 @@ uv run ruff format
 - `breaker.py`, `lab.py`, `diagnoser.py`: 담당자가 구현할 경계. 각각 `typing.Protocol`(`Breaker`, `Lab`, `Diagnoser`)과 그 자리를 대신하는 스탠드인(`FixedBreaker`, `MockLab`, `ReplayDiagnoser`)이 같이 있다. 실제 구현이 생기면 `Referee(lab=..., diagnoser=...)`에 같은 형태로 꽂는다.
 - `breaker.py`의 `LLMBreaker`: 모델 호출 함수 `complete(prompt) -> str`을 인자로 받아 시나리오를 제안하고 검사한다. 호출 실패는 `CompletionError`로 올라오며 재시도 횟수에 센다. 진입점(`breaker-propose`, `match`)이 `glm_client.OpencodeComplete`로 `complete`를 만든다.
 - `breaker_prompt.py`: `LLMBreaker`가 쓸 프롬프트 문자열을 만든다. 외부 호출은 하지 않는다.
-- `docker_lab.py`: `Lab`의 실제 구현(Docker Compose 실험망, D2·T2). `__main__.py`의 `LAB_IMPLS`에 등록해 `run --impl`로 고른다.
+- `docker_lab.py`: `Lab`의 실제 구현(Docker Compose 실험망, 단일 장애 16종, 검사 실행 `run_probe`). `__main__.py`의 `LAB_IMPLS`에 등록해 `run --impl`로 고른다.
 - `__main__.py`의 `DIAGNOSER_IMPLS`: `match`와 `run --diagnoser`에 꽂을 진단기. 실제 Diagnoser가 생기면 여기에 한 줄 등록한다. 기본 `none`(`NoDiagnosis`)은 원인을 답하지 않는 자리표시라, Diagnoser 없이도 Breaker 제안의 검증 통과·재현·정상화를 잴 수 있다. 기록의 `model`이 `none`이라 진단 지표와 섞이지 않는다. `run`에 `--diagnoser`를 여러 번 주면 반복 → 시나리오 → 진단기 순서로 섞어 돌린다. 기본값 `replay`는 저장된 진단을 재생하는 모드라 다른 진단기와 섞지 않는다.
 - `tools.py`: Diagnoser가 쓰는 검사 도구 목록의 단일 출처(이름, 인자, 허용 값, LLM용 설명, 방식별 묶음).
 - `toolbox.py`: 심판이 라운드마다 만들어 Diagnoser에 넘기는 도구 창구. 인자·한도를 검사하고 실제 출력을 기록하며, 채점은 이 기록으로만 한다. 실험망 쪽은 `lab.py`의 `ProbeRunner.run_probe` 하나를 구현한다.
@@ -60,7 +60,7 @@ uv run ruff format
 - `validate.py`(제안 검사), `scoring.py`(채점), `report.py`(지표와 HTML): `referee.py`가 조립한다.
 - `records.py`: 정답이 든 기록의 기본 위치(`~/netrunner-private/runs`)와 권한(폴더 700, 파일 600). 기록을 쓰는 코드는 모두 이 모듈의 `ensure_private_dir`, `open_private`, `write_private_text`를 거친다.
 - `config/lab.json`: 실험망 주소. 실험망 담당이 관리한다.
-- `fixtures/first_integration`(시연 두 라운드)과 `fixtures/scoring_examples`(채점 사례)는 `<이름>.scenario.json`과 `<이름>.diagnosis.json` 짝으로 이루어지며, `demo`와 테스트가 이 이름 규칙에 의존한다. `fixtures/fixed_set`은 고정 세트 초안 15개(장애 7종, 단일 장애, `fs*.scenario.json`)다. 측정 전에 동결하며, 실험망에서 구현된 장애(지금은 D2·T2)만 `lab-check`로 돌린다(#14).
+- `fixtures/first_integration`(시연 두 라운드)과 `fixtures/scoring_examples`(채점 사례)는 `<이름>.scenario.json`과 `<이름>.diagnosis.json` 짝으로 이루어지며, `demo`와 테스트가 이 이름 규칙에 의존한다. `fixtures/fixed_set`은 고정 세트 초안 15개(장애 7종, 단일 장애, `fs*.scenario.json`)다. 측정 전에 동결한다(#14). 16종이 실험망에 들어온 뒤(#63) 15개 모두 `lab-check`를 통과했다.
 
 ### 지켜야 할 경계
 
