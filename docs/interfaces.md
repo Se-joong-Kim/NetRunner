@@ -109,9 +109,9 @@ Diagnoser는 검사를 **심판이 라운드마다 만들어 넘기는 도구 �
 | `dig` | **domain**, server | 실험망 도메인 / `dns`, `alt_dns` 또는 그 IP |
 | `curl` | **url**, resolve_ip | http·https이고 호스트가 실험망 도메인 / 실험망 대역 IP |
 | `capture` | **url** | curl과 같음. 캡처하는 동안 요청 한 번, 패킷마다 `#<n>` |
-| `openssl` | **host**, port, servername | 실험망 도메인 / 1–65535 / 실험망 도메인 |
+| `openssl` | **host**, port, servername | 실험망 도메인 / 1–65535 / 실험망 도메인. 인증서 주체·발급자·유효 기간과 검증 결과 출력 |
 | `ping` | **host**, count | 실험망 도메인 또는 대역 IP / 1–10 |
-| `tracepath` | **host** | ping과 같음 |
+| `tracepath` | **host** | ping과 같음. 홉별 경로와 PMTU 출력 |
 
 방식별 허용 도구(설계안 9.2절):
 

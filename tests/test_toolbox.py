@@ -15,7 +15,7 @@ from netrunner.tools import TOOLS
 from netrunner.validate import LabInfo
 
 ROOT = Path(__file__).resolve().parent.parent
-LAB = LabInfo.load(ROOT / "config" / "lab.json")  # enabled_tools: dig, curl, capture
+LAB = LabInfo.load(ROOT / "config" / "lab.json")  # enabled_tools: all six probes
 ALL = frozenset(TOOLS)
 DIG = {"domain": "shop.lab"}
 

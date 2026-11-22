@@ -42,7 +42,7 @@ class DockerLab:
 
     def run_probe(self, tool: str, args: dict) -> ProbeResult:
         """클라이언트에서 허용된 검사 도구를 실행한다."""
-        if tool not in {"dig", "curl", "capture", "ping"}:
+        if tool not in {"dig", "curl", "capture", "openssl", "ping", "tracepath"}:
             return ProbeResult(False, error="지원하지 않는 검사 도구")
         error = check_args(tool, args, self.lab_info)
         if error:
@@ -61,6 +61,32 @@ class DockerLab:
             )
             ok = result["exit_code"] in (0, 1)
             output = result["stdout"] + result["stderr"]
+        elif tool == "tracepath":
+            result = self._run("client", "tracepath", "-n", args["host"])
+            ok = result["exit_code"] in (0, 1)
+            output = result["stdout"] + result["stderr"]
+        elif tool == "openssl":
+            script = (
+                'out=$(mktemp) || exit 1; trap \'rm -f "$out"\' EXIT; '
+                'openssl s_client -connect "$1:$2" -servername "$3" -verify 5 -showcerts '
+                '</dev/null >"$out" 2>&1 || true; '
+                'openssl x509 -in "$out" -noout -subject -issuer -dates 2>&1; '
+                'grep "Verify return code" "$out" || cat "$out"'
+            )
+            result = self._run(
+                "client",
+                "sh",
+                "-c",
+                script,
+                "sh",
+                args["host"],
+                str(args.get("port", 443)),
+                args.get("servername", args["host"]),
+            )
+            output = result["stdout"] + result["stderr"]
+            ok = result["exit_code"] == 0 and (
+                "notAfter=" in output or "Verify return code" in output
+            )
         elif tool == "dig":
             server = args.get("server", "dns")
             server = self.hosts.get(server, server)
@@ -222,7 +248,7 @@ exit 1
         script = (
             'set -e; : > /tmp/dns-hosts.new; while [ "$#" -gt 0 ]; do '
             'printf "%s %s\\n" "$1" "$2" >> /tmp/dns-hosts.new; shift 2; done; '
-            'mv /tmp/dns-hosts.new /tmp/dns-hosts; kill -HUP "$(cat /run/dnsmasq.pid)"'
+            'mv /tmp/dns-hosts.new /tmp/dns-hosts; kill -HUP "$(cat /tmp/dnsmasq.pid)"'
         )
         result = self._run("dns", "sh", "-c", script, "sh", *args)
         if result["exit_code"] == 0:
@@ -909,7 +935,7 @@ case "$q" in *"qdisc tbf 30:"*) tc qdisc del dev "$dev" root;; esac
         router = self._run("router", "iptables", "-F", "NETRUNNER")
         firewall = self._run("web", "iptables", "-F", "NETRUNNER")
         backend = self._run(
-            "backend", "sh", "-c", "pidof httpd >/dev/null || httpd -p 8000 -h /www -u nobody"
+            "backend", "sh", "-c", "pidof httpd >/dev/null || httpd -p 8000 -h /www"
         )
         tls = self._set_cert("valid")
         redirect = self._set_redirect(False)
