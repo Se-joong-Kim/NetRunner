@@ -26,7 +26,7 @@ from netrunner.validate import LabInfo
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def model_with_responses(*actions):
+def model_with_responses(*actions, method="C"):
     def reply(argv, **_kwargs):
         action = next(responses)
         text = action if isinstance(action, str) else json.dumps(action)
@@ -36,9 +36,10 @@ def model_with_responses(*actions):
     responses = iter(actions)
     run = Mock(side_effect=reply)
     complete = OpencodeComplete("opencode", ROOT, ROOT / "config/opencode_diagnoser.json", run=run)
-    return GlmDiagnoser(complete), run
+    return GlmDiagnoser(complete, method=method), run
 
 
+@pytest.mark.parametrize("method", ["C", "C-1"])
 @pytest.mark.parametrize(
     ("fault_id", "params", "checks", "outputs", "stage", "cause"),
     [
@@ -54,7 +55,7 @@ def model_with_responses(*actions):
     ],
 )
 def test_referee_scores_glm_diagnosis_using_toolbox_record(
-    fault_id, params, checks, outputs, stage, cause
+    fault_id, params, checks, outputs, stage, cause, method
 ):
     scenario = Scenario.from_dict(
         {
@@ -67,7 +68,7 @@ def test_referee_scores_glm_diagnosis_using_toolbox_record(
     )
     result = {"stage": stage, "cause": cause, "evidence": [{"ref": "probe:p1", "claim": "관측"}]}
     diagnoser, model = model_with_responses(
-        *({"check": check} for check in checks), {"findings": [result]}
+        *({"check": check} for check in checks), {"findings": [result]}, method=method
     )
     runner = Mock()
     runner.run_probe.side_effect = [ProbeResult(True, output) for output in outputs]
@@ -76,6 +77,7 @@ def test_referee_scores_glm_diagnosis_using_toolbox_record(
     record = referee.run_round(scenario)
 
     assert record["status"] == "scored", record["invalid_reason"]
+    assert record["method"] == record["diagnosis"]["method"] == method
     assert record["score"]["faults"][0]["verdict"] == "correct"
     assert record["score"]["evidence"][0]["supported"] is True
     assert record["reset_verified"] is True
@@ -83,6 +85,97 @@ def test_referee_scores_glm_diagnosis_using_toolbox_record(
     last_prompt = model.call_args.kwargs["input"]
     assert "probe:p1" in last_prompt and outputs[0] in last_prompt
     assert "hidden-answer-note" not in last_prompt and "hidden-scenario" not in last_prompt
+    first_prompt = model.call_args_list[0].kwargs["input"]
+    offered = set(json.loads(first_prompt.splitlines()[-1])["available_checks"])
+    expected = {"dns", "alt_dns", "http", "ping", "tracepath"}
+    assert offered == (expected | {"capture"} if method == "C" else expected)
+
+
+@pytest.mark.parametrize("method", ["C", "C-2"])
+def test_capture_comparison_preserves_original_probe_and_packet_citations(method):
+    outgoing = "IP 10.21.0.2.12345 > 10.20.0.10.80: Flags [S]"
+    captured = "\n".join(
+        (
+            "#1 12:00:00 IP 10.21.0.2.123 > 10.20.0.53.53: A? shop.lab.",
+            "#2 12:00:00 IP 10.20.0.53.53 > 10.21.0.2.123: A 10.20.0.10",
+            f"#3 12:00:01 {outgoing}",
+            f"#4 12:00:02 {outgoing}",
+            f"#5 12:00:03 {outgoing}",
+            "#6 12:00:03 IP 10.20.0.10.80 > 10.21.0.2.12345: Flags [R.]",
+        )
+    )
+    scenario = Scenario.from_dict(
+        {
+            "scenario_id": "capture-comparison",
+            "target_url": "http://shop.lab/",
+            "complaint": "접속 실패",
+            "faults": [{"id": "T2", "params": {"port": 80}}],
+        }
+    )
+    diagnoser, model = model_with_responses(
+        {"check": "capture"},
+        {"findings": [{"stage": "TCP", "cause": "연결 거부", "evidence": ["pcap:p1#5-6"]}]},
+        method=method,
+    )
+    runner = Mock()
+    runner.run_probe.return_value = ProbeResult(True, captured, packets=6, file="private.pcap")
+    record = Referee(MockLab(), diagnoser, LabInfo.load(ROOT / "config/lab.json"), runner=runner)
+
+    result = record.run_round(scenario)
+
+    assert result["status"] == "scored", result["invalid_reason"]
+    assert result["method"] == result["diagnosis"]["method"] == method
+    assert result["probes"][0]["output"] == captured
+    assert result["score"]["evidence"][0]["supported"] is True
+    assert result["score"]["evidence"][0]["ref"] == "pcap:p1#5-6"
+    model_input = json.loads(model.call_args.kwargs["input"].splitlines()[-1])
+    (observation,) = model_input["observations"]
+    assert "file" not in observation
+    if method == "C":
+        assert "DNS 질의 1, DNS 응답 1, TCP [S] 3" in observation["output"]
+        assert [
+            line.split()[0] for line in observation["output"].splitlines() if line.startswith("#")
+        ] == ["#1", "#2", "#3", "#5", "#6"]
+    else:
+        assert observation["output"] == captured
+
+
+@pytest.mark.parametrize("ref", ["pcap:p2#1", "pcap:p1#0", "pcap:p1#1-3", "pcap:p1#2-1"])
+def test_capture_citation_requires_a_recorded_packet_range(ref):
+    diagnoser, _ = model_with_responses(
+        {"check": "capture"},
+        {"findings": [{"stage": "TCP", "cause": "연결 거부", "evidence": [ref]}]},
+        method="C-2",
+    )
+    runner = Mock()
+    runner.run_probe.return_value = ProbeResult(True, "#1 packet\n#2 packet", packets=2)
+    limits = Limits()
+    lab = LabInfo.load(ROOT / "config/lab.json")
+    toolbox = Toolbox(runner, lab, limits, frozenset({"capture"}))
+
+    with pytest.raises(ContractError, match="이번 라운드에서 실행한 검사"):
+        diagnoser.diagnose(RoundBrief("r1", "http://shop.lab/", "접속 실패", limits), toolbox)
+
+
+def test_referee_rejects_model_capture_request_in_c1():
+    scenario = Scenario.from_dict(
+        {
+            "scenario_id": "no-capture",
+            "target_url": "http://shop.lab/",
+            "complaint": "접속 실패",
+            "faults": [{"id": "T2", "params": {"port": 80}}],
+        }
+    )
+    diagnoser, _ = model_with_responses({"check": "capture"}, method="C-1")
+    runner = Mock()
+    referee = Referee(MockLab(), diagnoser, LabInfo.load(ROOT / "config/lab.json"), runner=runner)
+
+    record = referee.run_round(scenario)
+
+    assert record["status"] == "invalid"
+    assert "허용되지 않은 검사" in record["invalid_reason"]
+    assert record["reset_verified"]
+    runner.run_probe.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -287,10 +380,12 @@ def test_invalid_json_retry_stops_at_model_call_limit_or_one_retry(limit, calls)
     assert model.call_count == calls
 
 
-def test_opencode_factory_uses_deny_all_agent():
-    diagnoser = GlmDiagnoser.from_opencode("opencode")
+@pytest.mark.parametrize("method", ["C", "C-1", "C-2"])
+def test_opencode_factory_uses_deny_all_agent(method):
+    diagnoser = GlmDiagnoser.from_opencode("opencode", method=method)
     adapter = diagnoser._complete
     agents = json.loads(adapter.config.read_text(encoding="utf-8"))["agent"]
+    assert diagnoser.method == method
     assert adapter.agent == "diagnoser"
     assert agents[adapter.agent]["permission"]["*"] == "deny"
 

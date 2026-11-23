@@ -14,9 +14,10 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
+from .capture_summary import summarize_capture
 from .contracts import EVIDENCE_REF, ContractError, Diagnosis, Evidence, Finding, Probe, RoundBrief
 from .faults import FAULTS, lookup_fault
 from .glm_client import DEFAULT_MODEL, OpencodeComplete
@@ -80,14 +81,17 @@ class HttpDiagnoser:
 class GlmDiagnoser:
     """실험망에서 기록된 검사 결과를 근거로 접속 장애를 진단한다."""
 
-    method = "C"
-
-    def __init__(self, complete: OpencodeComplete):
+    def __init__(self, complete: OpencodeComplete, *, method: Literal["C", "C-1", "C-2"] = "C"):
+        if method not in ("C", "C-1", "C-2"):
+            raise ValueError(f"GLM 검사 진단기가 지원하지 않는 방식: {method}")
         self._complete = complete
         self.model = complete.model
+        self.method = method
 
     @classmethod
-    def from_opencode(cls, binary: str, *, model: str = DEFAULT_MODEL) -> GlmDiagnoser:
+    def from_opencode(
+        cls, binary: str, *, model: str = DEFAULT_MODEL, method: Literal["C", "C-1", "C-2"] = "C"
+    ) -> GlmDiagnoser:
         """파일과 셸 도구를 거부하는 전용 설정으로 GLM을 연결한다."""
         root = Path(__file__).resolve().parent.parent
         return cls(
@@ -97,7 +101,8 @@ class GlmDiagnoser:
                 root / "config" / "opencode_diagnoser.json",
                 model=model,
                 agent="diagnoser",
-            )
+            ),
+            method=method,
         )
 
     def diagnose(self, brief: RoundBrief, tools: Toolbox) -> Diagnosis:
@@ -120,6 +125,7 @@ class GlmDiagnoser:
         pending = {key: value for key, value in checks.items() if value[0] in available}
         observations = []
         probe_ids: set[str] = set()
+        captures: dict[str, int] = {}
         format_retry_used = False
         retry_instruction = ""
         empty_retry_used = False
@@ -156,6 +162,7 @@ class GlmDiagnoser:
                 "이 실험망의 정상 왕복 시간은 약 1ms다. ping에서 응답이 오더라도 RTT가 "
                 "이보다 일관되게 크게 늘면 경로 / 지연의 근거다. HTTP 200이어도 해당한다. "
                 "패킷 흐름을 구분해야 하면 사용 가능한 capture를 실행하고 검사 번호를 인용한다. "
+                "캡처에 표시된 패킷을 인용할 때는 pcap:p1#2 또는 pcap:p1#2-4 형식을 쓴다. "
                 "결론을 내리기 어렵고 available_checks에 남은 검사가 있으면 먼저 검사한다. "
                 '검사 후에도 장애 원인을 확인할 수 없으면 {"findings":[]}를 반환한다.\n'
                 f"허용된 단계 / 원인 목록\n{_FAULT_LABELS}\n"
@@ -191,7 +198,10 @@ class GlmDiagnoser:
                     if finding.cause.strip().casefold() not in {"정상", "normal", "ok"}
                 ]
                 if any(
-                    not finding.evidence or any(ev.ref not in probe_ids for ev in finding.evidence)
+                    not finding.evidence
+                    or any(
+                        not _observed_ref(ev.ref, probe_ids, captures) for ev in finding.evidence
+                    )
                     for finding in findings
                 ):
                     raise ContractError("이번 라운드에서 실행한 검사만 근거로 인용할 수 있음")
@@ -224,7 +234,14 @@ class GlmDiagnoser:
                 raise ContractError("GLM이 허용되지 않은 검사 또는 응답 형식을 요청함")
             tool, args = pending.pop(check)
             view = tools.call(tool, args)
-            observations.append({"check": check, **asdict(view)})
+            observation = {"check": check, **asdict(view)}
+            if tool == "capture" and view.probe_id:
+                observation.pop("file")
+                if view.packets is not None:
+                    captures[view.probe_id] = view.packets
+                if self.method == "C":
+                    observation["output"] = summarize_capture(view.output, view.packets)
+            observations.append(observation)
             if view.probe_id:
                 probe_ids.add(f"probe:{view.probe_id}")
 
@@ -232,6 +249,21 @@ class GlmDiagnoser:
             raise ContractError("GLM 응답이 JSON 객체 형식이 아님. 재요청 한도 소진")
         result.elapsed_s = time.monotonic() - started
         return result
+
+
+def _observed_ref(ref: str, probe_ids: set[str], captures: dict[str, int]) -> bool:
+    """현재 라운드의 검사 또는 유효한 캡처 범위인지 확인한다."""
+    if ref in probe_ids:
+        return True
+    match = EVIDENCE_REF.fullmatch(ref)
+    if match is None or match["cap"] not in captures:
+        return False
+    try:
+        first = int(match["a"])
+        last = int(match["b"] or match["a"])
+    except ValueError:
+        return False
+    return 1 <= first <= last <= captures[match["cap"]]
 
 
 class ReplayDiagnoser:

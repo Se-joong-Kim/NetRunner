@@ -139,7 +139,7 @@ Diagnoser는 검사를 **심판이 라운드마다 만들어 넘기는 도구 �
     {"probe_id": "p1", "tool": "curl", "args": {"url": "http://shop.lab/"},
      "output": "curl: (7) Failed to connect ... Connection refused", "elapsed_ms": 4},
     {"probe_id": "p3", "tool": "tcpdump", "args": {"filter": "tcp port 80"},
-     "output": "<캡처 요약기 출력>", "elapsed_ms": 1200, "packets": 2, "file": "captures/x.pcap"}
+     "output": "<패킷 번호가 붙은 캡처 출력>", "elapsed_ms": 1200, "packets": 2, "file": "captures/x.pcap"}
   ],
   "llm_calls": 3, "tokens": 2600, "elapsed_s": 14.7
 }
@@ -147,6 +147,7 @@ Diagnoser는 검사를 **심판이 라운드마다 만들어 넘기는 도구 �
 
 - `stage`는 `DNS | 경로 | TCP | TLS | HTTP | 차단` 중 하나이고, `cause`는 장애 목록의 원인 이름을 쓴다. 영어 별칭(`path`, `refused`, `packet loss` 등)도 받는다.
 - `method`는 설계안 9.2절의 비교 대상이다: `A` 규칙 기반, `B` 도구 없는 LLM, `C` 전체, `C-1` 캡처 제외, `C-2` 요약기 제외.
+- 방식 C는 GLM에 캡처 관측 종류별 건수와 처음·마지막 패킷을 원래 번호대로 전달한다. C-2는 같은 창구의 번호가 붙은 캡처 출력을 그대로 전달한다. 심판의 `probes`에는 두 방식 모두 창구가 기록한 원본 출력이 남는다.
 - `model`은 진단을 실행한 라운드에 반드시 채운다. Solar와 GLM의 숫자가 섞이지 않게 하기 위해서다. Breaker 제안 실패 기록(6절)은 진단이 없으므로 `null`이다.
 - **근거 참조 형식**: `probe:<probe_id>`는 명령 출력 전체를, `pcap:<probe_id>#<n>` 또는 `#<n>-<m>`은 캡처 안의 패킷 번호를 가리킨다. 번호는 도구 창구가 붙인 것이다. `trace`는 옛 형식과 호환하려고 남긴 칸이며 채점에 쓰지 않는다. 근거의 존재와 지지는 창구 기록(라운드 기록의 `probes`)으로 판정한다.
 
