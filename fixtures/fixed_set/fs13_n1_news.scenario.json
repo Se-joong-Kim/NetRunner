@@ -1,15 +1,16 @@
 {
-  "scenario_id": "FS08-T2-NEWS",
+  "scenario_id": "FS13-N1-NEWS",
   "target_url": "http://news.lab/",
   "faults": [
     {
-      "id": "T2",
+      "id": "N1",
       "params": {
-        "port": 80
+        "delay_ms": 300,
+        "jitter_ms": 50
       }
     }
   ],
   "complaint": "사이트가 열리지 않아요.",
   "origin": "fixed",
-  "note": "T2 연결 거부: 웹 서버가 80번을 RST로 거부(news.lab 대상)"
+  "note": "N1 지연·지터: 경로에 300ms와 지터 50ms"
 }

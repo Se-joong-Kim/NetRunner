@@ -1,0 +1,13 @@
+{
+  "scenario_id": "FS25-H2-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "H2",
+      "params": {}
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "H2 리다이렉트 순환: shop.lab이 자기 자신으로 301"
+}

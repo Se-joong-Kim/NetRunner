@@ -295,9 +295,8 @@ def test_real_lab_recovers_after_each_fault(filename):
         "fs02_d1_news",
         "fs05_d3_shop",
         "fs06_d3_news",
-        "fs09_n1_shop",
-        "fs10_n1_news",
-        "fs11_n1_shop_long",
+        "fs12_n1_shop",
+        "fs13_n1_news",
     ],
 )
 def test_real_dns_fault_recovers(filename):
@@ -351,7 +350,7 @@ def test_real_extra_fault_recovers(fault):
 
 @pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
 @pytest.mark.parametrize(
-    "filename", ["fs12_s1_shop", "fs13_s1_news", "fs14_h1_shop", "fs15_h1_news"]
+    "filename", ["fs19_s1_shop", "fs20_s1_news", "fs23_h1_shop", "fs24_h1_news"]
 )
 def test_real_web_fault_recovers(filename):
     lab = DockerLab()
@@ -375,7 +374,7 @@ def test_real_web_fault_recovers(filename):
 def test_real_s2_recovers(domain, cert_domain):
     lab = DockerLab()
     scenario = Scenario.from_dict(
-        read_json(ROOT / "fixtures/fixed_set/fs12_s1_shop.scenario.json")
+        read_json(ROOT / "fixtures/fixed_set/fs19_s1_shop.scenario.json")
     )
     scenario.target_url = f"https://{domain}/"
     scenario.faults = [FaultSpec("S2", {"cert_domain": cert_domain})]
@@ -433,7 +432,7 @@ def test_real_n4_recovers():
 def test_real_b1_recovers(domain):
     lab = DockerLab()
     scenario = Scenario.from_dict(
-        read_json(ROOT / "fixtures/fixed_set/fs12_s1_shop.scenario.json")
+        read_json(ROOT / "fixtures/fixed_set/fs19_s1_shop.scenario.json")
     )
     scenario.target_url = f"https://{domain}/"
     scenario.faults = [FaultSpec("B1", {"domain": domain})]

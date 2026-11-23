@@ -1,0 +1,15 @@
+{
+  "scenario_id": "FS28-B1-NEWS",
+  "target_url": "https://news.lab/",
+  "faults": [
+    {
+      "id": "B1",
+      "params": {
+        "domain": "news.lab"
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "B1 SNI 차단: news.lab의 SNI를 보고 연결을 RST"
+}

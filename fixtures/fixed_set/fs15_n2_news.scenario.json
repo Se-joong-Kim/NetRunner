@@ -1,0 +1,15 @@
+{
+  "scenario_id": "FS15-N2-NEWS",
+  "target_url": "http://news.lab/",
+  "faults": [
+    {
+      "id": "N2",
+      "params": {
+        "loss_pct": 20
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "N2 패킷 손실: 경로에 20% 손실(news.lab 대상)"
+}

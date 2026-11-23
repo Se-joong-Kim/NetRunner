@@ -1,0 +1,16 @@
+{
+  "scenario_id": "FS29-B2-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "B2",
+      "params": {
+        "domain": "shop.lab",
+        "block_ip": "10.20.0.12"
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "B2 DNS 변조: shop.lab을 차단 안내 IP로 응답"
+}

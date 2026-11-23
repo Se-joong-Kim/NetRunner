@@ -1,0 +1,16 @@
+{
+  "scenario_id": "FS08-D4-NEWS",
+  "target_url": "http://news.lab/",
+  "faults": [
+    {
+      "id": "D4",
+      "params": {
+        "domain": "news.lab",
+        "delay_ms": 2000
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D4 DNS 지연: 53번 트래픽에 2000ms 지연(news.lab 질의)"
+}

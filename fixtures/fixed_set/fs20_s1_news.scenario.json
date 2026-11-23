@@ -1,6 +1,6 @@
 {
-  "scenario_id": "FS12-S1-SHOP",
-  "target_url": "https://shop.lab/",
+  "scenario_id": "FS20-S1-NEWS",
+  "target_url": "https://news.lab/",
   "faults": [
     {
       "id": "S1",
@@ -9,5 +9,5 @@
   ],
   "complaint": "사이트가 열리지 않아요.",
   "origin": "fixed",
-  "note": "S1 인증서 만료: shop.lab의 인증서가 만료됨"
+  "note": "S1 인증서 만료: news.lab의 인증서가 만료됨"
 }

@@ -1,0 +1,16 @@
+{
+  "scenario_id": "FS30-B2-NEWS",
+  "target_url": "http://news.lab/",
+  "faults": [
+    {
+      "id": "B2",
+      "params": {
+        "domain": "news.lab",
+        "block_ip": "10.20.0.12"
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "B2 DNS 변조: news.lab을 차단 안내 IP로 응답(news.lab 대상)"
+}

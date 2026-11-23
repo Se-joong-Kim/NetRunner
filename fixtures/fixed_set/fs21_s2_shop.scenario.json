@@ -1,0 +1,15 @@
+{
+  "scenario_id": "FS21-S2-SHOP",
+  "target_url": "https://shop.lab/",
+  "faults": [
+    {
+      "id": "S2",
+      "params": {
+        "cert_domain": "news.lab"
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "S2 이름 불일치: shop.lab에 news.lab 인증서를 응답"
+}
