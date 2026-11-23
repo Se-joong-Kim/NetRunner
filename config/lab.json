@@ -13,5 +13,5 @@
     "block_page": "10.20.0.12"
   },
   "enabled_faults": ["D1", "D2", "D3", "D4", "N1", "N2", "N3", "N4", "S1", "S2", "H1", "H2", "T1", "T2", "B1", "B2"],
-  "enabled_tools": ["dig", "curl", "capture", "ping"]
+  "enabled_tools": ["dig", "curl", "capture", "openssl", "ping", "tracepath"]
 }

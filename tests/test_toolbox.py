@@ -15,7 +15,7 @@ from netrunner.tools import TOOLS
 from netrunner.validate import LabInfo
 
 ROOT = Path(__file__).resolve().parent.parent
-LAB = LabInfo.load(ROOT / "config" / "lab.json")  # enabled_tools: dig, curl, capture
+LAB = LabInfo.load(ROOT / "config" / "lab.json")  # enabled_tools: all six probes
 ALL = frozenset(TOOLS)
 DIG = {"domain": "shop.lab"}
 
@@ -55,7 +55,6 @@ def test_call_runs_and_records_with_ids():
     [
         ("rm", {}, ALL),
         ("dig", DIG, frozenset()),
-        ("openssl", {"host": "shop.lab"}, ALL),
         ("dig", {"domain": "example.com"}, ALL),
     ],
 )

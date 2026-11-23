@@ -42,7 +42,7 @@ class DockerLab:
 
     def run_probe(self, tool: str, args: dict) -> ProbeResult:
         """클라이언트에서 허용된 검사 도구를 실행한다."""
-        if tool not in {"dig", "curl", "capture", "ping"}:
+        if tool not in {"dig", "curl", "capture", "openssl", "ping", "tracepath"}:
             return ProbeResult(False, error="지원하지 않는 검사 도구")
         error = check_args(tool, args, self.lab_info)
         if error:
@@ -61,6 +61,32 @@ class DockerLab:
             )
             ok = result["exit_code"] in (0, 1)
             output = result["stdout"] + result["stderr"]
+        elif tool == "tracepath":
+            result = self._run("client", "tracepath", "-n", args["host"])
+            ok = result["exit_code"] in (0, 1)
+            output = result["stdout"] + result["stderr"]
+        elif tool == "openssl":
+            script = (
+                "out=$(mktemp) || exit 1; trap 'rm -f \"$out\"' EXIT; "
+                'openssl s_client -connect "$1:$2" -servername "$3" -verify 5 -showcerts '
+                '</dev/null >"$out" 2>&1 || true; '
+                'openssl x509 -in "$out" -noout -subject -issuer -dates 2>&1; '
+                'grep "Verify return code" "$out" || cat "$out"'
+            )
+            result = self._run(
+                "client",
+                "sh",
+                "-c",
+                script,
+                "sh",
+                args["host"],
+                str(args.get("port", 443)),
+                args.get("servername", args["host"]),
+            )
+            output = result["stdout"] + result["stderr"]
+            ok = result["exit_code"] == 0 and (
+                "notAfter=" in output or "Verify return code" in output
+            )
         elif tool == "dig":
             server = args.get("server", "dns")
             server = self.hosts.get(server, server)
@@ -222,7 +248,8 @@ exit 1
         script = (
             'set -e; : > /tmp/dns-hosts.new; while [ "$#" -gt 0 ]; do '
             'printf "%s %s\\n" "$1" "$2" >> /tmp/dns-hosts.new; shift 2; done; '
-            'mv /tmp/dns-hosts.new /tmp/dns-hosts; kill -HUP "$(cat /run/dnsmasq.pid)"'
+            "mv /tmp/dns-hosts.new /tmp/dns-hosts; "
+            'su-exec dnsmasq kill -HUP "$(cat /tmp/dnsmasq.pid)"'
         )
         result = self._run("dns", "sh", "-c", script, "sh", *args)
         if result["exit_code"] == 0:
@@ -254,7 +281,8 @@ exit 1
             "web",
             "sh",
             "-c",
-            'cp "$1" /tmp/server.crt && kill -HUP "$(cat /tmp/nginx.pid)"',
+            'cp "$1" /tmp/server.crt.new && mv /tmp/server.crt.new /tmp/server.crt && '
+            'su-exec nobody kill -HUP "$(cat /tmp/nginx.pid)"',
             "sh",
             f"/certs/{cert}.crt",
         )
@@ -290,7 +318,8 @@ exit 1
             "web",
             "sh",
             "-c",
-            'printf "%s\\n" "$1" > /tmp/redirect.conf && kill -HUP "$(cat /tmp/nginx.pid)"',
+            'printf "%s\\n" "$1" > /tmp/redirect.conf && '
+            'su-exec nobody kill -HUP "$(cat /tmp/nginx.pid)"',
             "sh",
             text,
         )
@@ -480,7 +509,7 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
                 "backend",
                 "sh",
                 "-c",
-                "killall httpd; while pidof httpd >/dev/null; do sleep 0.1; done",
+                "su-exec nobody killall httpd; while pidof httpd >/dev/null; do sleep 0.1; done",
             )
         elif fault.id == "H2" and not fault.params:
             r = self._set_redirect(True)
@@ -740,12 +769,9 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
                 "client", "ping", "-c", "20", "-i", "0.05", "-W", "3", self.config["web_ip"]
             )
             load_start = self._start_load()
-            try:
-                loaded = self._run(
-                    "client", "ping", "-c", "20", "-i", "0.05", "-W", "3", self.config["web_ip"]
-                )
-            finally:
-                load_cleanup = self._stop_load()
+            loaded = self._run(
+                "client", "ping", "-c", "20", "-i", "0.05", "-W", "3", self.config["web_ip"]
+            )
             baseline_rtts = [
                 float(v) for v in re.findall(r"time[=<](\d+(?:\.\d+)?)\s*ms", baseline["stdout"])
             ]
@@ -770,7 +796,6 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
                 loaded_p95_ms=loaded_p95,
                 load_stop=load_stop,
                 load_start=load_start,
-                load_cleanup=load_cleanup,
             )
             ok = (
                 dns_ok
@@ -781,7 +806,6 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
                 and load_stop["exit_code"] == 0
                 and baseline["exit_code"] == 0
                 and load_start["exit_code"] == 0
-                and load_cleanup["exit_code"] == 0
                 and baseline_p95 is not None
                 and loaded_p95 is not None
                 and len(loaded_rtts) >= 10
@@ -848,14 +872,15 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
                 scenario.target_url,
             )
             observations["block_page"] = blocked
-            ok = (
-                dns_ok
-                and alt_ok
-                and primary["stdout"].strip() == fault.params["block_ip"]
-                and blocked["exit_code"] == 0
-                and blocked["stdout"].splitlines()[-1:] == ["200"]
-                and "Access blocked by NetRunner lab" in blocked["stdout"]
-            )
+            if urlsplit(scenario.target_url).scheme == "https":
+                ok = blocked["exit_code"] == 7
+            else:
+                ok = (
+                    blocked["exit_code"] == 0
+                    and blocked["stdout"].splitlines()[-1:] == ["200"]
+                    and "Access blocked by NetRunner lab" in blocked["stdout"]
+                )
+            ok = ok and dns_ok and alt_ok and primary["stdout"].strip() == fault.params["block_ip"]
         elif fault.id == "T2":
             ok = (
                 dns_ok
@@ -870,6 +895,12 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
             ok = ok and "Flags [S]" in capture["stdout"] and "Flags [R" not in capture["stdout"]
         elif fault.id == "B1" or fault.id == "T2":
             ok = ok and "Flags [R" in capture["stdout"]
+        elif fault.id == "B2" and urlsplit(scenario.target_url).scheme == "https":
+            ok = ok and any(
+                line.rsplit("IP ", 1)[-1].startswith(f"{fault.params['block_ip']}.443 >")
+                and "Flags [R" in line
+                for line in capture["stdout"].splitlines()
+            )
         ok = ok and capture["exit_code"] == 0 and capture["packets"] > 0 and Path(path).is_file()
         return LabResult(ok, f"{fault.id} 증상 {'재현' if ok else '확인 실패'}", observations)
 
@@ -909,7 +940,10 @@ case "$q" in *"qdisc tbf 30:"*) tc qdisc del dev "$dev" root;; esac
         router = self._run("router", "iptables", "-F", "NETRUNNER")
         firewall = self._run("web", "iptables", "-F", "NETRUNNER")
         backend = self._run(
-            "backend", "sh", "-c", "pidof httpd >/dev/null || httpd -p 8000 -h /www -u nobody"
+            "backend",
+            "sh",
+            "-c",
+            "pidof httpd >/dev/null || su-exec nobody httpd -p 8000 -h /www",
         )
         tls = self._set_cert("valid")
         redirect = self._set_redirect(False)

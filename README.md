@@ -59,4 +59,4 @@ npm install --prefix .venv-opencode --save-exact @opencode/cli@2.3.0
 
 실험망 하나에는 검사 명령을 한 번에 하나만 실행한다. 시작 전에 장애가 남아 있으면 초기화 후 정상 접속을 다시 확인한다. 캡처의 `output`에는 원본 pcap의 패킷 번호(`#1` 등), `packets`에는 총 개수, `file`에는 파일 경로를 기록한다. 명령이 시간 초과로 중단되어도 캡처 프로세스를 정리하며, 정리 실패는 정상 복구로 처리하지 않는다.
 
-두 네트워크의 고정 대역은 `10.21.0.0/24`와 `10.20.0.0/24`다. 로컬 환경의 대역과 충돌하면 주소와 라우팅을 함께 변경해야 한다. 각 컨테이너는 시작 시 기본 외부 경로를 제거한다. Diagnoser의 검사는 심판의 도구 창구(`toolbox.py`)가 인자와 한도를 확인한 뒤 `DockerLab.run_probe`가 client 컨테이너에서 실행한다. 쓸 수 있는 도구는 `config/lab.json`의 `enabled_tools`(지금은 dig, curl, capture, ping)다.
+두 네트워크의 고정 대역은 `10.21.0.0/24`와 `10.20.0.0/24`다. 로컬 환경의 대역과 충돌하면 주소와 라우팅을 함께 변경해야 한다. 각 컨테이너는 시작 시 기본 외부 경로를 제거한다. Diagnoser의 검사는 심판의 도구 창구(`toolbox.py`)가 인자와 한도를 확인한 뒤 `DockerLab.run_probe`가 client 컨테이너에서 실행한다. 쓸 수 있는 도구는 `config/lab.json`의 `enabled_tools`(dig, curl, capture, openssl, ping, tracepath)다.
