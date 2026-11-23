@@ -1,0 +1,16 @@
+{
+  "scenario_id": "FS07-D4-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "D4",
+      "params": {
+        "domain": "shop.lab",
+        "delay_ms": 1000
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D4 DNS 지연: 53번 트래픽에 1000ms 지연(shop.lab 질의)"
+}

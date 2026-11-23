@@ -1,15 +1,15 @@
 {
-  "scenario_id": "FS09-N1-SHOP",
+  "scenario_id": "FS18-N4-SHOP",
   "target_url": "http://shop.lab/",
   "faults": [
     {
-      "id": "N1",
+      "id": "N4",
       "params": {
-        "delay_ms": 100
+        "rate_kbit": 512
       }
     }
   ],
   "complaint": "사이트가 열리지 않아요.",
   "origin": "fixed",
-  "note": "N1 지연: 경로에 100ms 지연"
+  "note": "N4 큐잉 지연: 512kbit 대역 제한과 배경 부하(#71 확인 전)"
 }

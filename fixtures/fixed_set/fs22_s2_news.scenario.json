@@ -1,0 +1,15 @@
+{
+  "scenario_id": "FS22-S2-NEWS",
+  "target_url": "https://news.lab/",
+  "faults": [
+    {
+      "id": "S2",
+      "params": {
+        "cert_domain": "shop.lab"
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "S2 이름 불일치: news.lab에 shop.lab 인증서를 응답"
+}

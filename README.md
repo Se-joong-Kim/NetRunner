@@ -11,7 +11,7 @@ Breaker(장애를 심는 LLM 에이전트)와 Diagnoser(증상만 듣고 원인�
 | 김승범 | Breaker | `netrunner/breaker.py`, `breaker_prompt.py`, `glm_client.py`, `config/opencode_sandbox.json`, `fixtures/d2_ip_classes/`, `tests/test_breaker.py`, `test_glm_client.py`, `test_propose.py` |
 | 양시찬 | 실험망 | `netrunner/lab.py`, `docker_lab.py`, `config/lab.json`, `lab/`, `compose.yaml`, `tests/test_docker_lab.py`, `docs/plan-Yang.md`, `docs/work-summary-Yang.md` |
 | 이현섭 | Diagnoser | `netrunner/diagnoser.py`, `http_lab.py`, `http_demo.py`, `labs/http/`, `config/http_lab.json`, `fixtures/http/`, `docs/http-lab.md`, `tests/test_http_diagnoser.py`, `test_http_lab.py` |
-| 김세중 | 심판과 통합 | `netrunner/referee.py`, `validate.py`, `scoring.py`, `report.py`, `toolbox.py`, `records.py`, `__main__.py`, `__init__.py`, `fixtures/first_integration/`, `fixtures/scoring_examples/`, `docs/superpowers/`, `tests/test_judge.py`, `test_run.py`, `test_toolbox.py`, `test_tools.py`, `test_records.py`, `test_match.py`, `test_methods.py`, `test_report.py` |
+| 김세중 | 심판과 통합 | `netrunner/referee.py`, `validate.py`, `scoring.py`, `report.py`, `toolbox.py`, `records.py`, `rule_diagnoser.py`, `__main__.py`, `__init__.py`, `fixtures/first_integration/`, `fixtures/scoring_examples/`, `docs/superpowers/`, `tests/test_judge.py`, `test_run.py`, `test_toolbox.py`, `test_tools.py`, `test_records.py`, `test_match.py`, `test_methods.py`, `test_report.py`, `test_rule_diagnoser.py` |
 | 계약 | 모듈 사이 데이터 형식 | `docs/interfaces.md`, `netrunner/contracts.py`, `faults.py`, `tools.py` |
 | 공용 | 팀 공용 파일 | `CLAUDE.md`, `README.md`, `pyproject.toml`, `uv.lock`, `.github/`, `.gitignore`, `.gitattributes`, `docs/planning/` |
 
@@ -35,6 +35,7 @@ docker build -t netrunner-lab ./lab
 docker compose up -d --no-build
 uv run netrunner run --impl docker --repeat 3   # 심판으로 시연 두 라운드(D2·T2)를 3번씩 반복
 uv run netrunner lab-check --dir fixtures/fixed_set   # 심판 없이 고정 세트의 실험망 단계만 확인
+uv run netrunner run --impl docker --dir fixtures/fixed_set --diagnoser rules   # 방식 A(규칙 기준선)로 진단
 uv run netrunner match --rounds 3 --opencode <opencode 경로>   # Breaker 제안으로 대결(진단기 기본 none)
 NETRUNNER_INTEGRATION=1 uv run pytest
 docker compose down
@@ -50,7 +51,7 @@ npm install --prefix .venv-opencode --save-exact @opencode/cli@2.3.0
 
 설치한 뒤 한 번 `opencode auth login opencode-go`로 키를 opencode 자격 증명 저장소에 등록한다. Windows에서는 `.venv-opencode\node_modules\.bin\opencode.cmd auth login opencode-go`다. 키는 대화형으로 입력하고 명령 인자로 넘기지 않는다. 환경변수 `OPENCODE_API_KEY`는 허용 목록(`netrunner/child_env.py`)이 opencode에 넘기지 않으므로, 등록하지 않으면 `Model unavailable: opencode-go/...` 오류가 난다. 등록 여부는 `opencode auth list`로 본다(#40).
 
-`run`은 고정 세트(`--dir`, 기본 `fixtures/first_integration`)를 심판으로 `--repeat`번 돌리고, 결과 표와 화면을 `--out`(기본 `~/netrunner-private/runs`, 저장소 밖)에 남긴다. 기본(`--diagnoser replay`)은 저장된 진단을 재생하므로 AI 진단 성능이 아니라 실험망의 재현·정상화와 심판 경로를 확인하는 용도다. `--diagnoser`로 진단기를 여럿 주면(예: 방식 A·B·C·C-1·C-2) 고정 세트를 진단기마다 돌려 방식별 지표를 비교한다. 결과 표의 `증상 재현`과 `초기화 확인` 열이 완료 기준(반복 시도 중 재현·정상화 성공 건수)이다. 결과 화면에는 정답 장애별 판정 횟수와 오탐을 모은 오진 유형 표가 있고, `--repeat`가 2 이상이면 방식별 회차 정확도 그래프도 나온다. 정상화가 확인되지 않으면 그 자리에서 멈춘다. `--impl mock`은 모의 실험망으로 같은 과정을 돌리며, `demo`는 `run --impl mock --repeat 1`과 같다.
+`run`은 고정 세트(`--dir`, 기본 `fixtures/first_integration`)를 심판으로 `--repeat`번 돌리고, 결과 표와 화면을 `--out`(기본 `~/netrunner-private/runs`, 저장소 밖)에 남긴다. 기본(`--diagnoser replay`)은 저장된 진단을 재생하므로 AI 진단 성능이 아니라 실험망의 재현·정상화와 심판 경로를 확인하는 용도다. `--diagnoser`로 진단기를 여럿 주면(예: 방식 A·B·C·C-1·C-2) 고정 세트를 진단기마다 돌려 방식별 지표를 비교한다. 방식 A는 `rules`다. LLM 없이 정해진 순서(DNS 기본·보조 → HTTP → ping)로 검사하고 if-else 규칙으로 장애 목록의 원인을 고른다(`netrunner/rule_diagnoser.py`의 모듈 설명에 규칙 전체가 있다). 결과 표의 `증상 재현`과 `초기화 확인` 열이 완료 기준(반복 시도 중 재현·정상화 성공 건수)이다. 결과 화면에는 정답 장애별 판정 횟수와 오탐을 모은 오진 유형 표가 있고, `--repeat`가 2 이상이면 방식별 회차 정확도 그래프도 나온다. 정상화가 확인되지 않으면 그 자리에서 멈춘다. `--impl mock`은 모의 실험망으로 같은 과정을 돌리며, `demo`는 `run --impl mock --repeat 1`과 같다.
 
 `match`는 Breaker가 GLM으로 낸 시나리오를 심판이 라운드마다 검증, 주입, 재현 확인, 진단, 채점, 정상화 확인까지 돌린다. 끝나면 진단 지표 표와 함께 Breaker 제안의 검증 거부, 증상 재현, 정상화 확인 수를 보여 준다. 진단기는 `--diagnoser`로 고르고, 실제 Diagnoser가 들어오기 전에는 원인을 답하지 않는 자리표시(`none`)를 쓴다.
 

@@ -55,6 +55,7 @@ uv run ruff format
 - `docker_lab.py`: `Lab`의 실제 구현(Docker Compose 실험망, 단일 장애 16종, 검사 실행 `run_probe`). `__main__.py`의 `LAB_IMPLS`에 등록해 `run --impl`로 고른다.
 - `__main__.py`의 `DIAGNOSER_IMPLS`: `match`와 `run --diagnoser`에 꽂을 진단기. 실제 Diagnoser가 생기면 여기에 한 줄 등록한다. 기본 `none`(`NoDiagnosis`)은 원인을 답하지 않는 자리표시라, Diagnoser 없이도 Breaker 제안의 검증 통과·재현·정상화를 잴 수 있다. 기록의 `model`이 `none`이라 진단 지표와 섞이지 않는다. `run`에 `--diagnoser`를 여러 번 주면 반복 → 시나리오 → 진단기 순서로 섞어 돌린다. 기본값 `replay`는 저장된 진단을 재생하는 모드라 다른 진단기와 섞지 않는다.
 - `tools.py`: Diagnoser가 쓰는 검사 도구 목록의 단일 출처(이름, 인자, 허용 값, LLM용 설명, 방식별 묶음).
+- `rule_diagnoser.py`: 방식 A 규칙 기준선(`RuleDiagnoser`, `run --diagnoser rules`). LLM 없이 도구 창구로 정해진 검사를 하고 if-else 규칙으로 장애 목록의 원인만 낸다. 규칙은 장애 정의와 개발용 장애로 정하고, 고정 세트 결과에 맞춰 고치지 않는다. 채점 신호(`faults.py`의 `signals`)를 가져다 쓰지 않는다.
 - `toolbox.py`: 심판이 라운드마다 만들어 Diagnoser에 넘기는 도구 창구. 인자·한도를 검사하고 실제 출력을 기록하며, 채점은 이 기록으로만 한다. 실험망 쪽은 `lab.py`의 `ProbeRunner.run_probe` 하나를 구현한다.
 - `faults.py`: 장애 16종의 단일 출처. 정답 라벨, 매개변수 범위, 관측 차단 여부, 근거 지지 판정용 신호를 가진다. 검증, 채점, 보고서가 모두 여기서 읽는다.
 - `validate.py`(제안 검사), `scoring.py`(채점), `report.py`(지표와 HTML): `referee.py`가 조립한다.

@@ -35,14 +35,14 @@ def _rounds(tmp_path) -> list[dict]:
 
 
 def test_each_scenario_runs_once_per_diagnoser_and_repeat(monkeypatch, tmp_path):
-    _register(monkeypatch, rules=_Silent("rules", "A"), glm=_Silent("glm", "C"))
-    assert _run(tmp_path, "--repeat", "2", "--diagnoser", "rules", "--diagnoser", "glm") == 0
+    _register(monkeypatch, a=_Silent("stub", "A"), glm=_Silent("glm", "C"))
+    assert _run(tmp_path, "--repeat", "2", "--diagnoser", "a", "--diagnoser", "glm") == 0
     recs = _rounds(tmp_path)
     # 반복 → 시나리오 → 진단기 순서로 섞어 실험망 상태 변화가 한 방식에 몰리지 않게 한다.
     once = [("FI-01", "A"), ("FI-01", "C"), ("FI-02", "A"), ("FI-02", "C")]
     assert [(r["scenario_id"], r["method"]) for r in recs] == once * 2
     rows = {(r["model"], r["method"]): r["rounds"] for r in summarize(recs)}
-    assert rows == {("rules", "A"): "4/4 (100%)", ("glm", "C"): "4/4 (100%)"}
+    assert rows == {("stub", "A"): "4/4 (100%)", ("glm", "C"): "4/4 (100%)"}
 
 
 def test_each_method_gets_its_own_tools(monkeypatch, tmp_path):
@@ -55,14 +55,14 @@ def test_each_method_gets_its_own_tools(monkeypatch, tmp_path):
 
 def test_run_with_diagnosers_stops_after_unverified_reset(monkeypatch, tmp_path):
     monkeypatch.setitem(cli.LAB_IMPLS, "mock", lambda _config: MockLab(broken_reset=True))
-    _register(monkeypatch, rules=_Silent("rules", "A"))
-    assert _run(tmp_path, "--repeat", "3", "--diagnoser", "rules") == 1
+    _register(monkeypatch, a=_Silent("stub", "A"))
+    assert _run(tmp_path, "--repeat", "3", "--diagnoser", "a") == 1
     assert len(_rounds(tmp_path)) == 1
 
 
 def test_replay_cannot_be_mixed_with_other_diagnosers(monkeypatch, tmp_path, capsys):
-    _register(monkeypatch, rules=_Silent("rules", "A"))
-    assert _run(tmp_path, "--diagnoser", "replay", "--diagnoser", "rules") == 1
+    _register(monkeypatch, a=_Silent("stub", "A"))
+    assert _run(tmp_path, "--diagnoser", "replay", "--diagnoser", "a") == 1
     assert "replay" in capsys.readouterr().err
     assert not list(tmp_path.glob("rounds-*.jsonl"))
 
