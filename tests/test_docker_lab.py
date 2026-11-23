@@ -174,10 +174,136 @@ def test_capture_probe_returns_record(monkeypatch):
 
 def test_dns_waits_for_expected_answers(monkeypatch):
     lab = DockerLab()
-    monkeypatch.setattr(lab, "_run", lambda *a, **kw: {"exit_code": 0, "stderr": ""})
+    calls = []
+    monkeypatch.setattr(
+        lab,
+        "_run",
+        lambda *a, **kw: calls.append(a) or {"exit_code": 0, "stderr": ""},
+    )
     answers = iter(["10.20.0.10", "10.20.0.10", "10.20.0.99", "10.20.0.10"])
     monkeypatch.setattr(lab, "_dns", lambda *a: {"exit_code": 0, "stdout": next(answers)})
     assert lab._set_dns("shop.lab", "10.20.0.99")["exit_code"] == 0
+    assert 'su-exec dnsmasq kill -HUP "$(cat /tmp/dnsmasq.pid)"' in calls[0][3]
+
+
+def test_n4_keeps_load_active_after_symptom_verification(monkeypatch, tmp_path):
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r1_dns_old_ip.scenario.json")
+    )
+    scenario.faults = [FaultSpec("N4", {"rate_kbit": 256})]
+    events = []
+    ping_outputs = iter(
+        [
+            "\n".join("64 bytes from web: time=1 ms" for _ in range(20)),
+            "\n".join("64 bytes from web: time=20 ms" for _ in range(20)),
+        ]
+    )
+    pcap = tmp_path / "n4.pcap"
+    pcap.touch()
+
+    monkeypatch.setattr(
+        lab,
+        "_dns",
+        lambda server, domain, timeout=2: {
+            "exit_code": 0,
+            "stdout": lab.config["web_ip"],
+        },
+    )
+    monkeypatch.setattr(
+        lab,
+        "_curl",
+        lambda *a: {"exit_code": 0, "stdout": "200 0 0 0", "stderr": ""},
+    )
+    monkeypatch.setattr(
+        lab,
+        "_run",
+        lambda *a, **kw: (
+            events.append("ping") or {"exit_code": 0, "stdout": next(ping_outputs), "stderr": ""}
+        ),
+    )
+    monkeypatch.setattr(lab, "_stop_load", lambda: events.append("stop") or {"exit_code": 0})
+    monkeypatch.setattr(lab, "_start_load", lambda: events.append("start") or {"exit_code": 0})
+    monkeypatch.setattr(
+        lab,
+        "_capture",
+        lambda url: (
+            {"exit_code": 0, "packets": 1, "stdout": "#1 packet"},
+            str(pcap),
+        ),
+    )
+
+    result = lab.verify_symptom(scenario)
+
+    assert result.ok, result.observations
+    assert events == ["stop", "ping", "start", "ping"]
+
+
+@pytest.mark.parametrize(
+    "blocked_exit,packet,expected",
+    [
+        (7, "target_reset", True),
+        (7, "other_reset", False),
+        (7, "target_syn_and_other_reset", False),
+        (28, "target_syn", False),
+    ],
+)
+def test_https_b2_requires_refusal_from_blockpage(
+    monkeypatch, tmp_path, blocked_exit, packet, expected
+):
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r1_dns_old_ip.scenario.json")
+    )
+    scenario.target_url = "https://shop.lab/"
+    block_ip = lab.hosts["block_page"]
+    scenario.faults = [FaultSpec("B2", {"domain": "shop.lab", "block_ip": block_ip})]
+    packet_output = {
+        "target_reset": f"IP {block_ip}.443 > 10.21.0.2.12345: Flags [R.]",
+        "other_reset": "IP 10.20.0.99.443 > 10.21.0.2.12345: Flags [R.]",
+        "target_syn_and_other_reset": (
+            f"IP 10.21.0.2.12345 > {block_ip}.443: Flags [S]\n"
+            "IP 10.20.0.99.443 > 10.21.0.2.12345: Flags [R.]"
+        ),
+        "target_syn": f"IP 10.21.0.2.12345 > {block_ip}.443: Flags [S]",
+    }[packet]
+    pcap = tmp_path / "b2.pcap"
+    pcap.touch()
+
+    monkeypatch.setattr(
+        lab,
+        "_dns",
+        lambda server, domain, timeout=2: {
+            "exit_code": 0,
+            "stdout": block_ip if server == lab.hosts["dns"] else lab.config["web_ip"],
+        },
+    )
+    monkeypatch.setattr(
+        lab,
+        "_curl",
+        lambda *a: {"exit_code": blocked_exit, "stdout": "", "stderr": ""},
+    )
+    monkeypatch.setattr(
+        lab,
+        "_run",
+        lambda *a, **kw: {
+            "exit_code": blocked_exit,
+            "stdout": "",
+            "stderr": "Connection refused",
+        },
+    )
+    monkeypatch.setattr(
+        lab,
+        "_capture",
+        lambda url: (
+            {"exit_code": 0, "packets": 1, "stdout": packet_output},
+            str(pcap),
+        ),
+    )
+
+    result = lab.verify_symptom(scenario)
+
+    assert result.ok is expected, result.observations
 
 
 def test_capture_numbers_packets_and_always_cleans_up(monkeypatch, tmp_path):
@@ -424,6 +550,13 @@ def test_real_n4_recovers():
         assert lab.inject(scenario.faults[0]).ok
         result = lab.verify_symptom(scenario)
         assert result.ok, result.observations
+        running = lab._run(
+            "client",
+            "sh",
+            "-c",
+            'pid=$(cat /tmp/netrunner-load.pid); kill -0 "$pid"',
+        )
+        assert running["exit_code"] == 0
     finally:
         assert lab.reset().ok
         assert lab.health_check(scenario.target_url).ok
@@ -450,18 +583,22 @@ def test_real_b1_recovers(domain):
 
 @pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
 @pytest.mark.parametrize("domain", ["shop.lab", "news.lab"])
-def test_real_b2_recovers(domain):
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_real_b2_recovers(domain, scheme):
     lab = DockerLab()
     scenario = Scenario.from_dict(
         read_json(ROOT / "fixtures/first_integration/r1_dns_old_ip.scenario.json")
     )
-    scenario.target_url = f"http://{domain}/"
+    scenario.target_url = f"{scheme}://{domain}/"
     scenario.faults = [FaultSpec("B2", {"domain": domain, "block_ip": lab.hosts["block_page"]})]
     try:
         assert lab.health_check(scenario.target_url).ok
         assert lab.inject(scenario.faults[0]).ok
         result = lab.verify_symptom(scenario)
         assert result.ok, result.observations
+        if scheme == "https":
+            assert "Connection refused" in result.observations["block_page"]["stderr"]
+            assert "Flags [R" in result.observations["capture"]["stdout"]
     finally:
         assert lab.reset().ok
         assert lab.health_check(scenario.target_url).ok

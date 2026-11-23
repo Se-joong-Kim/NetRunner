@@ -5,14 +5,14 @@ x-hardened: &hardened
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
 
+# start.sh configures networking as root, then drops long-running workloads.
 services:
   router:
     <<: *hardened
     image: netrunner-lab
     build: ./lab
-    user: nobody
     command: [router]
-    cap_add: [NET_ADMIN]
+    cap_add: [NET_ADMIN, SETUID, SETGID]
     sysctls:
       net.ipv4.ip_forward: 1
     networks:
@@ -24,40 +24,36 @@ services:
     <<: *hardened
     image: netrunner-lab
     init: true
-    user: nobody
     command: [client]
     dns: 10.20.0.53
     # NET_ADMIN: 경로 설정, NET_RAW: tcpdump
-    cap_add: [NET_ADMIN, NET_RAW]
+    cap_add: [NET_ADMIN, NET_RAW, SETUID, SETGID]
     networks:
       client_net:
         ipv4_address: 10.21.0.2
   dns:
     <<: *hardened
     image: netrunner-lab
-    user: dnsmasq
     command: [dns]
-    # NET_BIND_SERVICE: 53번 포트
-    cap_add: [NET_ADMIN, NET_BIND_SERVICE]
+    # dnsmasq binds 53 as root, then drops to dnsmasq; HUP runs as dnsmasq.
+    cap_add: [NET_ADMIN, NET_BIND_SERVICE, SETUID, SETGID]
     networks:
       server_net:
         ipv4_address: 10.20.0.53
   alt-dns:
     <<: *hardened
     image: netrunner-lab
-    user: dnsmasq
     command: [dns]
-    cap_add: [NET_ADMIN, NET_BIND_SERVICE]
+    cap_add: [NET_ADMIN, NET_BIND_SERVICE, SETUID, SETGID]
     networks:
       server_net:
         ipv4_address: 10.20.0.54
   web:
     <<: *hardened
     image: netrunner-lab
-    user: nobody
     command: [web]
-    # NET_ADMIN: 장애 주입. 낮은 포트는 sysctl로 비root 바인딩을 허용한다.
-    cap_add: [NET_ADMIN]
+    # NET_ADMIN: 장애 주입. SETUID·SETGID: nginx를 nobody로 실행한다.
+    cap_add: [NET_ADMIN, SETUID, SETGID]
     sysctls:
       net.ipv4.ip_unprivileged_port_start: 0
     networks:
@@ -67,18 +63,16 @@ services:
     <<: *hardened
     image: netrunner-lab
     init: true
-    user: nobody
     command: [backend]
-    cap_add: [NET_ADMIN]
+    cap_add: [NET_ADMIN, SETUID, SETGID]
     networks:
       server_net:
         ipv4_address: 10.20.0.11
   blockpage:
     <<: *hardened
     image: netrunner-lab
-    user: nobody
     command: [blockpage]
-    cap_add: [NET_ADMIN]
+    cap_add: [NET_ADMIN, SETUID, SETGID]
     sysctls:
       net.ipv4.ip_unprivileged_port_start: 0
     networks:

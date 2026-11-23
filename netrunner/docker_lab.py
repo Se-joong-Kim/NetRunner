@@ -248,7 +248,8 @@ exit 1
         script = (
             'set -e; : > /tmp/dns-hosts.new; while [ "$#" -gt 0 ]; do '
             'printf "%s %s\\n" "$1" "$2" >> /tmp/dns-hosts.new; shift 2; done; '
-            'mv /tmp/dns-hosts.new /tmp/dns-hosts; kill -HUP "$(cat /tmp/dnsmasq.pid)"'
+            "mv /tmp/dns-hosts.new /tmp/dns-hosts; "
+            'su-exec dnsmasq kill -HUP "$(cat /tmp/dnsmasq.pid)"'
         )
         result = self._run("dns", "sh", "-c", script, "sh", *args)
         if result["exit_code"] == 0:
@@ -766,12 +767,9 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
                 "client", "ping", "-c", "20", "-i", "0.05", "-W", "3", self.config["web_ip"]
             )
             load_start = self._start_load()
-            try:
-                loaded = self._run(
-                    "client", "ping", "-c", "20", "-i", "0.05", "-W", "3", self.config["web_ip"]
-                )
-            finally:
-                load_cleanup = self._stop_load()
+            loaded = self._run(
+                "client", "ping", "-c", "20", "-i", "0.05", "-W", "3", self.config["web_ip"]
+            )
             baseline_rtts = [
                 float(v) for v in re.findall(r"time[=<](\d+(?:\.\d+)?)\s*ms", baseline["stdout"])
             ]
@@ -796,7 +794,6 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
                 loaded_p95_ms=loaded_p95,
                 load_stop=load_stop,
                 load_start=load_start,
-                load_cleanup=load_cleanup,
             )
             ok = (
                 dns_ok
@@ -807,7 +804,6 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
                 and load_stop["exit_code"] == 0
                 and baseline["exit_code"] == 0
                 and load_start["exit_code"] == 0
-                and load_cleanup["exit_code"] == 0
                 and baseline_p95 is not None
                 and loaded_p95 is not None
                 and len(loaded_rtts) >= 10
@@ -874,14 +870,15 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
                 scenario.target_url,
             )
             observations["block_page"] = blocked
-            ok = (
-                dns_ok
-                and alt_ok
-                and primary["stdout"].strip() == fault.params["block_ip"]
-                and blocked["exit_code"] == 0
-                and blocked["stdout"].splitlines()[-1:] == ["200"]
-                and "Access blocked by NetRunner lab" in blocked["stdout"]
-            )
+            if urlsplit(scenario.target_url).scheme == "https":
+                ok = blocked["exit_code"] == 7
+            else:
+                ok = (
+                    blocked["exit_code"] == 0
+                    and blocked["stdout"].splitlines()[-1:] == ["200"]
+                    and "Access blocked by NetRunner lab" in blocked["stdout"]
+                )
+            ok = ok and dns_ok and alt_ok and primary["stdout"].strip() == fault.params["block_ip"]
         elif fault.id == "T2":
             ok = (
                 dns_ok
@@ -896,6 +893,11 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
             ok = ok and "Flags [S]" in capture["stdout"] and "Flags [R" not in capture["stdout"]
         elif fault.id == "B1" or fault.id == "T2":
             ok = ok and "Flags [R" in capture["stdout"]
+        elif fault.id == "B2" and urlsplit(scenario.target_url).scheme == "https":
+            ok = ok and any(
+                line.startswith(f"IP {fault.params['block_ip']}.443 >") and "Flags [R" in line
+                for line in capture["stdout"].splitlines()
+            )
         ok = ok and capture["exit_code"] == 0 and capture["packets"] > 0 and Path(path).is_file()
         return LabResult(ok, f"{fault.id} 증상 {'재현' if ok else '확인 실패'}", observations)
 
@@ -935,7 +937,10 @@ case "$q" in *"qdisc tbf 30:"*) tc qdisc del dev "$dev" root;; esac
         router = self._run("router", "iptables", "-F", "NETRUNNER")
         firewall = self._run("web", "iptables", "-F", "NETRUNNER")
         backend = self._run(
-            "backend", "sh", "-c", "pidof httpd >/dev/null || httpd -p 8000 -h /www"
+            "backend",
+            "sh",
+            "-c",
+            "pidof httpd >/dev/null || su-exec nobody httpd -p 8000 -h /www",
         )
         tls = self._set_cert("valid")
         redirect = self._set_redirect(False)
