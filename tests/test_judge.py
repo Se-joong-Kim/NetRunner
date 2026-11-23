@@ -167,6 +167,18 @@ def test_integer_ip_param_is_rejected():
     assert any("IP 형식이 아님" in e for e in v.errors)
 
 
+def test_b2_block_ip_must_be_the_lab_block_page():
+    block = LAB.hosts["block_page"]
+    other = "10.20.0.99"
+    assert other != block
+    bad = {"id": "B2", "params": {"domain": "shop.lab", "block_ip": other}}
+    v = validate(scenario(faults=[bad]), LAB)
+    assert any("실험망이 받는 주소" in e for e in v.errors)
+    good = {"id": "B2", "params": {"domain": "shop.lab", "block_ip": block}}
+    v = validate(scenario(faults=[good]), LAB)
+    assert not any("실험망이 받는 주소" in e for e in v.errors)
+
+
 def test_tls_and_sni_faults_require_https():
     v = validate(scenario(target_url="http://shop.lab/", faults=[{"id": "S1"}]), LAB)
     assert any("https" in e for e in v.errors)
