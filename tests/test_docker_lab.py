@@ -391,8 +391,9 @@ def test_real_probe_outputs():
 
 
 @pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
-def test_web_server_runs_without_root():
-    result = DockerLab()._run("web", "sh", "-c", "awk '/^Uid:/ {print $2}' /proc/1/status")
+@pytest.mark.parametrize("service", ["web", "client", "backend"])
+def test_services_run_without_root(service):
+    result = DockerLab()._run(service, "sh", "-c", "awk '/^Uid:/ {print $2}' /proc/1/status")
     assert result["exit_code"] == 0 and result["stdout"].strip() not in ("", "0")
 
 

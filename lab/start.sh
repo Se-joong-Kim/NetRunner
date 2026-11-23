@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+# Keep the reaper unprivileged after root-only route setup.
 case "$1" in
   router)
     ip route del default 2>/dev/null || true
@@ -11,7 +12,7 @@ case "$1" in
   client)
     ip route del default 2>/dev/null || true
     ip route replace 10.20.0.0/24 via 10.21.0.254
-    exec su-exec nobody sleep infinity
+    exec su-exec nobody tini -- sleep infinity
     ;;
   dns)
     ip route del default 2>/dev/null || true
@@ -33,7 +34,7 @@ case "$1" in
     ip route replace 10.21.0.0/24 via 10.20.0.254
     su-exec nobody sh -c "printf 'NetRunner lab\\n' > /www/index.html; dd if=/dev/zero of=/www/large bs=1024 count=64 2>/dev/null"
     su-exec nobody httpd -p 8000 -h /www
-    exec su-exec nobody sleep infinity
+    exec su-exec nobody tini -- sleep infinity
     ;;
   blockpage)
     ip route del default 2>/dev/null || true
