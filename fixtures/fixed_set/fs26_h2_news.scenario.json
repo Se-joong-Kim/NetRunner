@@ -1,13 +1,13 @@
 {
-  "scenario_id": "FS15-H1-NEWS",
+  "scenario_id": "FS26-H2-NEWS",
   "target_url": "http://news.lab/",
   "faults": [
     {
-      "id": "H1",
+      "id": "H2",
       "params": {}
     }
   ],
   "complaint": "사이트가 열리지 않아요.",
   "origin": "fixed",
-  "note": "H1 서버 오류: 웹 뒷단 서버가 중지돼 502(news.lab 대상)"
+  "note": "H2 리다이렉트 순환: news.lab이 자기 자신으로 301(news.lab 대상)"
 }

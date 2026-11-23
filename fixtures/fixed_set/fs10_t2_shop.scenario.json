@@ -1,15 +1,15 @@
 {
-  "scenario_id": "FS11-N1-SHOP-LONG",
+  "scenario_id": "FS10-T2-SHOP",
   "target_url": "http://shop.lab/",
   "faults": [
     {
-      "id": "N1",
+      "id": "T2",
       "params": {
-        "delay_ms": 800
+        "port": 80
       }
     }
   ],
   "complaint": "사이트가 열리지 않아요.",
   "origin": "fixed",
-  "note": "N1 지연: 경로에 800ms 지연(큰 값)"
+  "note": "T2 연결 거부: 웹 서버가 80번을 RST로 거부"
 }

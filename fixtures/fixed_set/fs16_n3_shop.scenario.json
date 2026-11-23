@@ -1,0 +1,15 @@
+{
+  "scenario_id": "FS16-N3-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "N3",
+      "params": {
+        "min_size": 1000
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "N3 MTU 블랙홀: 1000바이트 이상 패킷을 DROP"
+}

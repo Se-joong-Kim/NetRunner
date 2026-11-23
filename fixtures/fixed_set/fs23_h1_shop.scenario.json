@@ -1,5 +1,5 @@
 {
-  "scenario_id": "FS14-H1-SHOP",
+  "scenario_id": "FS23-H1-SHOP",
   "target_url": "http://shop.lab/",
   "faults": [
     {

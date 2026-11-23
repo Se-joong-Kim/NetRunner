@@ -1,15 +1,15 @@
 {
-  "scenario_id": "FS07-T2-SHOP",
+  "scenario_id": "FS14-N2-SHOP",
   "target_url": "http://shop.lab/",
   "faults": [
     {
-      "id": "T2",
+      "id": "N2",
       "params": {
-        "port": 80
+        "loss_pct": 10
       }
     }
   ],
   "complaint": "사이트가 열리지 않아요.",
   "origin": "fixed",
-  "note": "T2 연결 거부: 웹 서버가 80번을 RST로 거부"
+  "note": "N2 패킷 손실: 경로에 10% 손실"
 }

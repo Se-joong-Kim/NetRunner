@@ -1,0 +1,15 @@
+{
+  "scenario_id": "FS27-B1-SHOP",
+  "target_url": "https://shop.lab/",
+  "faults": [
+    {
+      "id": "B1",
+      "params": {
+        "domain": "shop.lab"
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "B1 SNI 차단: shop.lab의 SNI를 보고 연결을 RST"
+}

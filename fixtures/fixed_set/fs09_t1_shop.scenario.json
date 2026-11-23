@@ -1,0 +1,15 @@
+{
+  "scenario_id": "FS09-T1-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "T1",
+      "params": {
+        "port": 80
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "T1 무응답 차단: 80번 SYN을 iptables DROP"
+}
