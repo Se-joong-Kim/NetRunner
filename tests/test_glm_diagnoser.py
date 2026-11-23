@@ -6,8 +6,17 @@ from unittest.mock import Mock
 import pytest
 
 from netrunner import __main__ as cli
-from netrunner.contracts import ContractError, Limits, ProbeResult, RoundBrief, Scenario
+from netrunner.contracts import (
+    ContractError,
+    Evidence,
+    Finding,
+    Limits,
+    ProbeResult,
+    RoundBrief,
+    Scenario,
+)
 from netrunner.diagnoser import GlmDiagnoser
+from netrunner.faults import FAULTS
 from netrunner.glm_client import OpencodeComplete
 from netrunner.lab import MockLab
 from netrunner.referee import Referee
@@ -103,6 +112,82 @@ def test_zero_model_budget_does_not_call_opencode():
     )
     assert not result.findings
     model.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("limit", "corrected", "expected_calls", "causes"),
+    [
+        (3, "서버 무응답", 3, ["서버 무응답", "지연"]),
+        (4, "주 DNS 서버 무응답", 3, ["지연"]),
+        (2, "서버 무응답", 2, ["지연"]),
+    ],
+)
+def test_nonstandard_cause_retries_once_and_keeps_known_findings(
+    limit, corrected, expected_calls, causes
+):
+    unknown = {"stage": "DNS", "cause": "주 DNS 서버 무응답", "evidence": ["probe:p1"]}
+    known = {"stage": "dns", "cause": "slow", "evidence": ["probe:p1"]}
+    diagnoser, model = model_with_responses(
+        {"check": "dns"},
+        {"findings": [unknown, known]},
+        {"findings": [{**unknown, "cause": corrected}, known]},
+    )
+    runner = Mock()
+    runner.run_probe.return_value = ProbeResult(True, "DNS query output")
+    limits = Limits(max_llm_calls=limit)
+    lab = LabInfo.load(ROOT / "config/lab.json")
+    toolbox = Toolbox(runner, lab, limits, frozenset({"dig"}))
+
+    result = diagnoser.diagnose(RoundBrief("r1", "http://shop.lab/", "DNS 오류", limits), toolbox)
+
+    assert result.findings == [Finding("DNS", cause, [Evidence("probe:p1")]) for cause in causes]
+    assert model.call_count == expected_calls
+    runner.run_probe.assert_called_once_with("dig", {"domain": "shop.lab", "server": "dns"})
+    prompt = model.call_args.kwargs["input"]
+    assert all(f"- {fault.stage} / {fault.cause}\n" in prompt for fault in FAULTS.values())
+    if expected_calls == 3:
+        assert "목록에 없는 단계 또는 원인" in prompt
+        assert unknown["cause"] not in prompt
+
+
+def test_glm_can_use_path_capture_and_tls_checks_for_the_brief_target():
+    diagnoser, _ = model_with_responses(
+        {"check": "ping"},
+        {"check": "tracepath"},
+        {"check": "capture"},
+        {"check": "tls"},
+        {"findings": [{"stage": "경로", "cause": "latency", "evidence": ["probe:p1"]}]},
+    )
+    runner = Mock()
+    runner.run_probe.return_value = ProbeResult(True, "test output")
+    limits = Limits()
+    url = "https://shop.lab:8443/"
+    lab = LabInfo.load(ROOT / "config/lab.json")
+    toolbox = Toolbox(runner, lab, limits, frozenset({"ping", "tracepath", "capture", "openssl"}))
+
+    result = diagnoser.diagnose(RoundBrief("r1", url, "접속이 느려요", limits), toolbox)
+
+    assert result.findings == [Finding("경로", "지연", [Evidence("probe:p1")])]
+    assert [(p.tool, p.args) for p in toolbox.probes()] == [
+        ("ping", {"host": "shop.lab"}),
+        ("tracepath", {"host": "shop.lab"}),
+        ("capture", {"url": url}),
+        ("openssl", {"host": "shop.lab", "port": 8443}),
+    ]
+
+
+@pytest.mark.parametrize(("check", "allowed"), [("capture", {"ping"}), ("tls", {"openssl"})])
+def test_glm_rejects_checks_not_offered_for_the_round(check, allowed):
+    diagnoser, _ = model_with_responses({"check": check})
+    runner = Mock()
+    limits = Limits()
+    lab = LabInfo.load(ROOT / "config/lab.json")
+    toolbox = Toolbox(runner, lab, limits, frozenset(allowed))
+
+    with pytest.raises(ContractError, match="허용되지 않은 검사"):
+        diagnoser.diagnose(RoundBrief("r1", "http://shop.lab/", "접속 실패", limits), toolbox)
+
+    runner.run_probe.assert_not_called()
 
 
 def test_normal_observation_is_not_scored_as_an_extra_fault():
