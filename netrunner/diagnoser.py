@@ -14,7 +14,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
 from .contracts import EVIDENCE_REF, ContractError, Diagnosis, Evidence, Finding, Probe, RoundBrief
@@ -80,14 +80,17 @@ class HttpDiagnoser:
 class GlmDiagnoser:
     """실험망에서 기록된 검사 결과를 근거로 접속 장애를 진단한다."""
 
-    method = "C"
-
-    def __init__(self, complete: OpencodeComplete):
+    def __init__(self, complete: OpencodeComplete, *, method: Literal["C", "C-1"] = "C"):
+        if method not in ("C", "C-1"):
+            raise ValueError(f"GLM 검사 진단기가 지원하지 않는 방식: {method}")
         self._complete = complete
         self.model = complete.model
+        self.method = method
 
     @classmethod
-    def from_opencode(cls, binary: str, *, model: str = DEFAULT_MODEL) -> GlmDiagnoser:
+    def from_opencode(
+        cls, binary: str, *, model: str = DEFAULT_MODEL, method: Literal["C", "C-1"] = "C"
+    ) -> GlmDiagnoser:
         """파일과 셸 도구를 거부하는 전용 설정으로 GLM을 연결한다."""
         root = Path(__file__).resolve().parent.parent
         return cls(
@@ -97,7 +100,8 @@ class GlmDiagnoser:
                 root / "config" / "opencode_diagnoser.json",
                 model=model,
                 agent="diagnoser",
-            )
+            ),
+            method=method,
         )
 
     def diagnose(self, brief: RoundBrief, tools: Toolbox) -> Diagnosis:
