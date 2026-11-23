@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import time
 from dataclasses import asdict, replace
@@ -15,6 +16,7 @@ from pathlib import Path
 from . import SCHEMA_VERSION
 from .breaker import Breaker, BreakerError
 from .contracts import (
+    BaselineBrief,
     BreakerFeedback,
     ContractError,
     FaultOutcome,
@@ -130,7 +132,16 @@ class Referee:
             allowed = tools_for_method(self.diagnoser.method)
             if allowed is None:
                 return end(Status.INVALID, f"알 수 없는 진단 방식: {self.diagnoser.method}")
-            brief = RoundBrief(round_id, scenario.target_url, scenario.complaint, self.limits)
+            brief_args = (round_id, scenario.target_url, scenario.complaint, self.limits)
+            if self.diagnoser.method == "B" and getattr(self.diagnoser, "needs_curl_brief", False):
+                curl_error = self._baseline_curl_error(scenario.target_url)
+            else:
+                curl_error = None
+            brief = (
+                BaselineBrief(*brief_args, curl_error=curl_error)
+                if curl_error is not None
+                else RoundBrief(*brief_args)
+            )
             rec["brief"] = asdict(brief)
             toolbox = Toolbox(self.runner, self.lab_info, self.limits, allowed)
             t0 = time.monotonic()
@@ -171,6 +182,25 @@ class Referee:
                 rec["reset_verified"] = reset_ok and after_ok
             rec["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
             self._append(rec)
+
+    def _baseline_curl_error(self, url: str) -> str | None:
+        """방식 B의 입력 준비용 curl 한 번에서 오류 한 줄을 골라낸다."""
+        input_toolbox = Toolbox(self.runner, self.lab_info, self.limits, frozenset({"curl"}))
+        try:
+            view = input_toolbox.call("curl", {"url": url})
+        finally:
+            input_toolbox.close()
+        if view.probe_id is None:
+            return None
+
+        lines = view.output.splitlines()
+        for line in lines:
+            if re.match(r"^curl: \(\d+\) ", line):
+                return line[:300]
+        for line in lines:
+            if status := re.fullmatch(r"http_code=([45]\d{2})", line):
+                return f"HTTP {status[1]}"
+        return None
 
     def run_match(self, breaker: Breaker, rounds: int, max_retries: int = 3) -> list[dict]:
         """Breaker 제안 → 라운드 → 피드백을 반복한다.
