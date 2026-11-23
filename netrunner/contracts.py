@@ -143,6 +143,13 @@ class RoundBrief:
     limits: Limits = field(default_factory=Limits)
 
 
+@dataclass
+class BaselineBrief(RoundBrief):
+    """방식 B 진단에 사용할 수 있는 curl 오류 한 줄을 담는다."""
+
+    curl_error: str | None = None
+
+
 # --- Diagnoser → 심판
 
 # 근거 참조 형식: "probe:<probe_id>" 또는 "pcap:<probe_id>#<n>[-<m>]"

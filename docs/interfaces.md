@@ -78,6 +78,8 @@ python -m pytest tests                          # 심판 테스트
 
 `round_id`는 시나리오와 무관한 난수다. Diagnoser 담당은 `netrunner/diagnoser.py`의 `diagnose(brief, tools) -> Diagnosis`를 구현하고, 클래스에 `model`과 `method` 속성을 둔다. 진단이 실패한 라운드도 그 모델의 실패로 집계하기 위해서다. 시간 한도는 심판이 잰 시간으로 검사한다.
 
+방식 B에서 `needs_curl_brief = True`인 진단기는 선택적으로 `curl_error`를 받는다. 심판은 증상 재현을 확인한 뒤 허용된 대상 URL에 curl을 한 번 실행한다. curl 오류 한 줄이 있으면 그 줄만, HTTP 4xx·5xx이면 상태 코드 한 줄을 제공한다. 오류가 없거나 검사를 실행할 수 없으면 필드를 생략한다. 이 입력 준비 단계는 진단기의 도구 호출 수나 근거 기록에 포함하지 않는다. 방식 B는 진단을 제출할 때 검사 참조를 붙이지 않는다.
+
 ## 3-1. Diagnoser ↔ 심판: 검사 도구 창구 `Toolbox`
 
 설계: `docs/superpowers/specs/2026-11-13-probe-tools-design.md`
