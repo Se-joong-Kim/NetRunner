@@ -23,7 +23,6 @@ services:
   client:
     <<: *hardened
     image: netrunner-lab
-    init: true
     command: [client]
     dns: 10.20.0.53
     # NET_ADMIN: 경로 설정, NET_RAW: tcpdump
@@ -62,7 +61,6 @@ services:
   backend:
     <<: *hardened
     image: netrunner-lab
-    init: true
     command: [backend]
     cap_add: [NET_ADMIN, SETUID, SETGID]
     networks:
