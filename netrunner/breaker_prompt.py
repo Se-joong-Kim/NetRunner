@@ -64,6 +64,8 @@ def _param_how(name: str, p: Param, target: Scenario, lab: LabInfo) -> str:
             return f"대상 도메인 {target.domain}"
         return f"실험망 도메인({', '.join(lab.domains)}) 중 대상과 다른 것"
     if p.kind == "ip":
+        if p.host is not None and p.host in lab.hosts:
+            return f"실험망이 받는 주소 {lab.hosts[p.host]}뿐"
         return f"실험망 대역 {lab.subnet} 안의 IP, 정상 서버({lab.web_ip}) 제외"
     if p.kind == "port":
         return f"정수, 대상 포트 {target.port}로 고정"

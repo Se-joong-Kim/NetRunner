@@ -157,6 +157,9 @@ def _check_param(fault: Fault, name: str, value, scenario: Scenario, lab: LabInf
             return f"{where}: 실험망 대역({lab.subnet}) 밖의 IP"
         if str(ip) == lab.web_ip:
             return f"{where}: 정상 서버 IP와 같아 장애가 아님"
+        expected = lab.hosts.get(spec.host) if spec.host else None
+        if expected is not None and ip != ipaddress.ip_address(expected):
+            return f"{where}: 실험망이 받는 주소는 {expected}뿐 ({value!r})"
     elif spec.kind in ("int", "port"):
         if not isinstance(value, int) or isinstance(value, bool):
             return f"{where}: 정수가 아님 ({value!r})"

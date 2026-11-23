@@ -35,6 +35,8 @@ class Param:
     required: bool = True
     min: int | None = None
     max: int | None = None
+    # 실험망이 받는 값이 config/lab.json의 hosts 이름(예: "block_page")으로 고정되면 그 이름.
+    host: str | None = None
 
 
 @dataclass(frozen=True)
@@ -308,7 +310,7 @@ FAULTS: dict[str, Fault] = {
             "DNS 변조",
             "특정 도메인만 가짜 IP",
             "dnsmasq가 차단 안내 IP 응답",
-            {"domain": _DOMAIN, "block_ip": Param("ip")},
+            {"domain": _DOMAIN, "block_ip": Param("ip", host="block_page")},
             blocking=True,
             layer=1,
             signals=(r"{block_ip}",),
