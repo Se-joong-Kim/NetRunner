@@ -281,7 +281,8 @@ exit 1
             "web",
             "sh",
             "-c",
-            'cp "$1" /tmp/server.crt && kill -HUP "$(cat /tmp/nginx.pid)"',
+            'cp "$1" /tmp/server.crt.new && mv /tmp/server.crt.new /tmp/server.crt && '
+            'su-exec nobody kill -HUP "$(cat /tmp/nginx.pid)"',
             "sh",
             f"/certs/{cert}.crt",
         )
@@ -317,7 +318,8 @@ exit 1
             "web",
             "sh",
             "-c",
-            'printf "%s\\n" "$1" > /tmp/redirect.conf && kill -HUP "$(cat /tmp/nginx.pid)"',
+            'printf "%s\\n" "$1" > /tmp/redirect.conf && '
+            'su-exec nobody kill -HUP "$(cat /tmp/nginx.pid)"',
             "sh",
             text,
         )
@@ -507,7 +509,7 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
                 "backend",
                 "sh",
                 "-c",
-                "killall httpd; while pidof httpd >/dev/null; do sleep 0.1; done",
+                "su-exec nobody killall httpd; while pidof httpd >/dev/null; do sleep 0.1; done",
             )
         elif fault.id == "H2" and not fault.params:
             r = self._set_redirect(True)
@@ -895,7 +897,8 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
             ok = ok and "Flags [R" in capture["stdout"]
         elif fault.id == "B2" and urlsplit(scenario.target_url).scheme == "https":
             ok = ok and any(
-                line.startswith(f"IP {fault.params['block_ip']}.443 >") and "Flags [R" in line
+                line.rsplit("IP ", 1)[-1].startswith(f"{fault.params['block_ip']}.443 >")
+                and "Flags [R" in line
                 for line in capture["stdout"].splitlines()
             )
         ok = ok and capture["exit_code"] == 0 and capture["packets"] > 0 and Path(path).is_file()

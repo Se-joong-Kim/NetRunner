@@ -259,13 +259,13 @@ def test_https_b2_requires_refusal_from_blockpage(
     block_ip = lab.hosts["block_page"]
     scenario.faults = [FaultSpec("B2", {"domain": "shop.lab", "block_ip": block_ip})]
     packet_output = {
-        "target_reset": f"IP {block_ip}.443 > 10.21.0.2.12345: Flags [R.]",
-        "other_reset": "IP 10.20.0.99.443 > 10.21.0.2.12345: Flags [R.]",
+        "target_reset": f"#1 12:00:00.000000 IP {block_ip}.443 > 10.21.0.2.12345: Flags [R.]",
+        "other_reset": "#1 12:00:00.000000 IP 10.20.0.99.443 > 10.21.0.2.12345: Flags [R.]",
         "target_syn_and_other_reset": (
-            f"IP 10.21.0.2.12345 > {block_ip}.443: Flags [S]\n"
-            "IP 10.20.0.99.443 > 10.21.0.2.12345: Flags [R.]"
+            f"#1 12:00:00.000000 IP 10.21.0.2.12345 > {block_ip}.443: Flags [S]\n"
+            "#2 12:00:00.000100 IP 10.20.0.99.443 > 10.21.0.2.12345: Flags [R.]"
         ),
-        "target_syn": f"IP 10.21.0.2.12345 > {block_ip}.443: Flags [S]",
+        "target_syn": f"#1 12:00:00.000000 IP 10.21.0.2.12345 > {block_ip}.443: Flags [S]",
     }[packet]
     pcap = tmp_path / "b2.pcap"
     pcap.touch()
@@ -597,7 +597,7 @@ def test_real_b2_recovers(domain, scheme):
         result = lab.verify_symptom(scenario)
         assert result.ok, result.observations
         if scheme == "https":
-            assert "Connection refused" in result.observations["block_page"]["stderr"]
+            assert result.observations["block_page"]["exit_code"] == 7
             assert "Flags [R" in result.observations["capture"]["stdout"]
     finally:
         assert lab.reset().ok
