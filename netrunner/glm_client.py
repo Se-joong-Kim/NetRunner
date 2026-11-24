@@ -17,10 +17,12 @@ from pathlib import Path
 
 from .breaker import CompletionError
 from .child_env import child_environment
+from .contracts import Limits
 
 DEFAULT_MODEL = "opencode-go/glm-5.3-flash"
 DEFAULT_AGENT = "netrunner"
-DEFAULT_TIMEOUT = 120.0
+# 한 번의 호출 제한 시간은 라운드 시간 한도와 같다(진단 라운드의 max_seconds).
+DEFAULT_TIMEOUT = float(Limits().max_seconds)
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
