@@ -37,6 +37,8 @@ def _rec(method, scenario, verdicts, fps=(), status=Status.SCORED, origin="fixed
         "origin": origin,
         "scenario_id": scenario,
         "score": score if status == Status.SCORED else None,
+        # 실제 기록에는 늘 있다. 비어 있으면 증상 확인 전에 끝난 라운드다.
+        "lab_log": [],
     }
 
 
@@ -88,6 +90,38 @@ def test_repeat_index_is_the_occurrence_of_each_scenario_per_method():
     assert rows[("A", 2)]["cause"] == (2, 2)
     assert rows[("C", 1)]["cause"] == (1, 2)
     assert rows[("C", 2)]["cause"] == (1, 1)
+
+
+def _failed(method, scenario, faults, observable=None):
+    """증상이 재현된 뒤 진단기가 실패해 무효가 된 라운드 기록."""
+    return {
+        "status": Status.INVALID,
+        "model": "glm",
+        "method": method,
+        "origin": "fixed",
+        "scenario_id": scenario,
+        "score": None,
+        "answer": {"faults": [{"id": f[0], "params": {}} for f in faults]},
+        "validation": {"observable": observable or [True] * len(faults)},
+        "lab_log": [{"step": "verify_symptom", "ok": True}],
+    }
+
+
+def test_diagnoser_failure_is_a_verdict_in_misdiagnosis_rows():
+    recs = [_rec("B", "s1", [(D2, "correct")]), _failed("B", "s1", [D2])]
+    (row,) = misdiagnosis_rows(recs)
+    assert (row["correct"], row["failed"]) == (1, 1)
+
+
+def test_unobservable_fault_in_failed_round_is_masked():
+    (row,) = misdiagnosis_rows([_failed("B", "s1", [D2], observable=[False])])
+    assert (row["failed"], row["masked"]) == (0, 1)
+
+
+def test_repeat_rows_count_failed_round_in_denominator():
+    recs = [_rec("B", "s1", [(D2, "correct")]), _failed("B", "s1", [D2])]
+    rows = {r["repeat"]: r for r in repeat_rows(recs)}
+    assert rows[1]["cause"] == (1, 1) and rows[2]["cause"] == (0, 1)
 
 
 def test_rows_are_ordered_by_method_first():
