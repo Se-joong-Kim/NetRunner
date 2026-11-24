@@ -1,0 +1,13 @@
+{
+  "source_jsonl": "/home/jim/netrunner-private/runs/rounds-fixed_set-docker-20261124-142624.jsonl",
+  "source_rounds": 450,
+  "selected_original_invalid_rows": 51,
+  "rerun_code_commit": "91e509c7d4a5f1e872ee4a11ee9374be76dc07ef",
+  "baseline_measurement_commit": "d3dde94",
+  "model_timeout_seconds": 120.0,
+  "model": "opencode-go/glm-5.3-flash",
+  "started_at": "2026-11-24T12:28:51+00:00",
+  "rounds_path": "/home/jim/netrunner-private/runs/rerun-diagnosis-failures-20261124-122851-rounds.jsonl",
+  "model_io_path": "/home/jim/netrunner-private/runs/rerun-diagnosis-failures-20261124-122851-model-io.jsonl",
+  "details_path": "/home/jim/netrunner-private/runs/rerun-diagnosis-failures-20261124-122851-details.jsonl"
+}
