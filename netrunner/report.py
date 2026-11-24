@@ -14,12 +14,15 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from .contracts import Status
+from .faults import FAULTS
 
 VERDICT_KO = {
     "correct": "정답",
     "cause_wrong": "원인 틀림",
     "stage_wrong": "단계 틀림",
     "missed": "놓침",
+    # 증상이 재현된 뒤 진단기가 답을 못 냄(형식 오류, 시간 초과 등)
+    "failed": "진단 실패",
     "masked": "관측 불가(제외)",
 }
 
@@ -44,6 +47,28 @@ def p95(values: list[float]) -> float:
 def _reproduced(rec: dict) -> bool:
     """실험망 기록에 성공한 증상 확인 단계가 있으면 True."""
     return any(s["step"] == "verify_symptom" and s["ok"] for s in rec["lab_log"])
+
+
+def diagnosis_failed(rec: dict) -> bool:
+    """증상이 재현된 뒤 진단 단계에서 무효가 된 라운드면 True.
+
+    재현 확인 뒤에 라운드가 무효가 되는 경로는 진단기 쪽(형식 오류,
+    실행 오류, round_id 불일치)뿐이다. 이런 라운드는 설계안 9.3절대로
+    심은 장애를 못 맞힌 것으로 정확도 분모에 넣는다. 실험망 쪽 무효
+    (주입·재현 실패)는 진단기 책임이 아니므로 뺀다.
+    """
+    return rec["status"] == Status.INVALID and _reproduced(rec)
+
+
+def _failed_faults(rec: dict) -> list[tuple[str, bool]]:
+    """진단 실패 라운드의 정답 장애 ID와 관측 가능 여부."""
+    ids = [f["id"] for f in rec["answer"]["faults"]]
+    return list(zip(ids, rec["validation"]["observable"], strict=True))
+
+
+def _failed_scored(rec: dict) -> int:
+    """진단 실패 라운드에서 정확도 분모에 들어갈 장애 수(관측 가능한 것만)."""
+    return sum(seen for _, seen in _failed_faults(rec))
 
 
 def summarize_breaker(records: list[dict]) -> dict:
@@ -94,10 +119,11 @@ def summarize(records: list[dict]) -> list[dict]:
     rows = []
     for (model, method, origin), rs in sorted(groups.items()):
         sc = [r["score"] for r in rs if r["status"] == Status.SCORED]
+        failed = [r for r in rs if diagnosis_failed(r)]
         times = [s["elapsed_s"] for s in sc]
         tools = [s["tool_calls"] for s in sc]
-        faults = sum(s["scored_faults"] for s in sc)
-        fooled = sum(
+        faults = sum(s["scored_faults"] for s in sc) + sum(_failed_scored(r) for r in failed)
+        fooled = len(failed) + sum(
             any(f["verdict"] not in ("correct", "masked") for f in s["faults"])
             or bool(s["false_positives"])
             for s in sc
@@ -110,6 +136,7 @@ def summarize(records: list[dict]) -> list[dict]:
                 "rounds": ratio(len(sc), len(rs)),
                 "stage_acc": ratio(sum(s["stage_correct"] for s in sc), faults),
                 "cause_acc": ratio(sum(s["cause_correct"] for s in sc), faults),
+                "diag_failed": len(failed),
                 "false_pos": sum(len(s["false_positives"]) for s in sc),
                 "evidence": ratio(
                     sum(s["evidence_valid"] for s in sc), sum(s["evidence_total"] for s in sc)
@@ -118,7 +145,7 @@ def summarize(records: list[dict]) -> list[dict]:
                 "tool_calls_med": statistics.median(tools) if tools else "-",
                 "time_med_s": round(statistics.median(times), 2) if times else "-",
                 "time_p95_s": round(p95(times), 2) if times else "-",
-                "fooled": ratio(fooled, len(sc)),
+                "fooled": ratio(fooled, len(sc) + len(failed)),
                 # 실험망을 쓴 라운드 중 주입 뒤 증상까지 확인된 비율
                 "repro": ratio(sum(_reproduced(r) for r in rs), len(rs)),
                 "reset_ok": ratio(
@@ -141,6 +168,11 @@ def misdiagnosis_rows(records: list[dict]) -> list[dict]:
         for f in r["score"]["faults"]:
             key = (r["method"], r["model"], r["origin"], f"{f['id']} {f['label']}")
             counts[key][f["verdict"]] += 1
+    for r in records:
+        if diagnosis_failed(r):
+            for fid, seen in _failed_faults(r):
+                key = (r["method"], r["model"], r["origin"], f"{fid} {FAULTS[fid].label}")
+                counts[key]["failed" if seen else "masked"] += 1
     return [
         {"model": m, "method": me, "origin": o, "fault": fault, **{v: c[v] for v in VERDICT_KO}}
         for (me, m, o, fault), c in sorted(counts.items())
@@ -164,7 +196,8 @@ def repeat_rows(records: list[dict]) -> list[dict]:
 
     회차는 기록 순서로 정한다. 같은 방식·모델·세트에서 같은 시나리오가
     k번째로 나오면 k회차다(run --repeat의 반복 → 시나리오 → 진단기
-    순서와 맞는다). 무효 라운드도 회차는 세고 채점에서만 뺀다.
+    순서와 맞는다). 무효 라운드도 회차는 센다. 진단 실패 라운드는
+    분모에 넣고, 실험망 쪽 무효 라운드는 채점에서 뺀다.
     stage와 cause는 (맞힌 수, 채점한 장애 수) 짝이다.
     """
     seen: Counter = Counter()
@@ -180,6 +213,8 @@ def repeat_rows(records: list[dict]) -> list[dict]:
             s[0] += sc["stage_correct"]
             s[1] += sc["cause_correct"]
             s[2] += sc["scored_faults"]
+        elif diagnosis_failed(r):
+            s[2] += _failed_scored(r)
     return [
         {
             "model": m,
@@ -200,6 +235,7 @@ COLUMNS = [
     ("rounds", "유효 라운드"),
     ("stage_acc", "단계 정확도"),
     ("cause_acc", "원인 정확도"),
+    ("diag_failed", "진단 실패"),
     ("false_pos", "오탐"),
     ("evidence", "근거 유효율"),
     ("evidence_unverified", "수동 확인 필요"),
@@ -387,7 +423,7 @@ def misdiagnosis_section(records: list[dict]) -> str:
     ]
     out = [
         "<h2 class='sec'>오진 유형</h2>",
-        "<p class='muted'>채점한 라운드에서 정답 장애마다 받은 판정 횟수</p>",
+        "<p class='muted'>채점한 라운드와 진단 실패 라운드에서 정답 장애마다 받은 판정 횟수</p>",
         _html_table(["모델", "방식", "세트", "정답 장애", *VERDICT_KO.values()], body),
     ]
     fps = false_positive_rows(records)

@@ -526,6 +526,24 @@ def test_diagnoser_failures_count_against_that_model():
     assert len(rows) == 1 and rows[0]["rounds"] == "1/2 (50%)"
 
 
+def test_diagnoser_failure_counts_as_missed_in_accuracy():
+    # 설계안 9.3: 정확도는 심은 장애마다 센다. 증상이 재현된 뒤 진단기가
+    # 실패한 라운드는 그 장애를 못 맞힌 것으로 분모에 넣는다.
+    good = ReplayDiagnoser([dict(R2_DIAG, model="glm-5.3-flash")])
+    recs = [run_one(diag=good)[0], run_one(diag=Boom())[0]]
+    (row,) = summarize(recs)
+    assert row["stage_acc"] == "1/2 (50%)" and row["cause_acc"] == "1/2 (50%)"
+    assert row["diag_failed"] == 1
+    assert row["fooled"] == "1/2 (50%)"
+
+
+def test_lab_side_invalid_round_stays_out_of_accuracy():
+    # 증상이 재현되지 않은 라운드는 진단기 책임이 아니므로 분모에서 뺀다.
+    recs = [run_one()[0], run_one(lab=MockLab(no_symptom=True))[0]]
+    (row,) = summarize(recs)
+    assert row["cause_acc"] == "1/1 (100%)" and row["diag_failed"] == 0
+
+
 # ------------------------------------------------- 근거 자동 판정(신호)
 
 
