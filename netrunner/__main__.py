@@ -20,6 +20,7 @@ from .breaker_strategy import signature
 from .contracts import BreakerFeedback, Diagnosis, RoundBrief, Scenario, read_json
 from .diagnoser import Diagnoser, GlmDiagnoser, ReplayDiagnoser
 from .docker_lab import DockerLab
+from .glm_baseline import GlmBaselineDiagnoser
 from .glm_client import DEFAULT_MODEL, OpencodeComplete
 from .lab import Lab, MockLab, ReplayRunner
 from .records import default_runs_dir, ensure_private_dir, open_private, write_private_text
@@ -85,15 +86,23 @@ class NoDiagnosis:
 
 
 # match와 run에 꽂을 진단기. 인자는 명령줄 인자다. 새 Diagnoser는 여기에 한 줄 추가한다.
+# 설계안 9.2절의 방식: A는 rules, B·C·C-1·C-2는 GLM이다.
+GLM_B = "glm-b"
 GLM_C = "glm-c"
+GLM_C1 = "glm-c1"
+GLM_C2 = "glm-c2"
 RULES = "rules"
 DIAGNOSER_IMPLS: dict[str, Callable[[argparse.Namespace], Diagnoser]] = {
     "none": lambda _args: NoDiagnosis(),
+    GLM_B: lambda args: GlmBaselineDiagnoser.from_opencode(args.opencode, model=args.model),
     GLM_C: lambda args: GlmDiagnoser.from_opencode(args.opencode, model=args.model),
+    GLM_C1: lambda args: GlmDiagnoser.from_opencode(args.opencode, model=args.model, method="C-1"),
+    GLM_C2: lambda args: GlmDiagnoser.from_opencode(args.opencode, model=args.model, method="C-2"),
     RULES: lambda _args: RuleDiagnoser(),
 }
-# 실험망이 검사를 실행해야 진단할 수 있는 진단기
-NEEDS_PROBES: frozenset[str] = frozenset({GLM_C, RULES})
+# 실험망이 검사를 실행해야 진단할 수 있는 진단기. B는 도구를 쓰지 않지만
+# 심판이 입력으로 넣을 curl 오류 한 줄을 실험망에서 얻는다.
+NEEDS_PROBES: frozenset[str] = frozenset({GLM_B, GLM_C, GLM_C1, GLM_C2, RULES})
 # run에서 저장된 진단을 재생하는 모드의 이름. 다른 진단기와 섞지 않는다.
 REPLAY = "replay"
 
