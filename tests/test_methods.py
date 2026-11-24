@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from netrunner import __main__ as cli
 from netrunner.contracts import Diagnosis
 from netrunner.lab import MockLab
@@ -72,3 +74,24 @@ def test_default_run_still_replays_saved_diagnoses(tmp_path):
     recs = _rounds(tmp_path)
     assert [r["scenario_id"] for r in recs] == ["FI-01", "FI-02"]
     assert all(r["probes"] for r in recs)  # 저장된 검사 출력을 재생했다
+
+
+@pytest.mark.parametrize(
+    ("name", "method"),
+    [("glm-b", "B"), ("glm-c", "C"), ("glm-c1", "C-1"), ("glm-c2", "C-2")],
+)
+def test_run_registers_each_glm_method(name, method):
+    args = cli.build_parser().parse_args(
+        ["run", "--diagnoser", name, "--opencode", "test-opencode", "--model", "test/model"]
+    )
+    diagnoser = cli.DIAGNOSER_IMPLS[name](args)
+    assert (diagnoser.method, diagnoser.model) == (method, "test/model")
+    assert diagnoser._complete.binary == "test-opencode"
+
+
+@pytest.mark.parametrize("name", ["glm-b", "glm-c1", "glm-c2"])
+@pytest.mark.parametrize("command", ["run", "match"])
+def test_glm_methods_require_a_connected_probe_runner(command, name, tmp_path, capsys):
+    assert cli.main([command, "--impl", "mock", "--diagnoser", name, "--out", str(tmp_path)]) == 1
+    assert "검사 실행기가 연결되지 않았습니다" in capsys.readouterr().err
+    assert not list(tmp_path.iterdir())
