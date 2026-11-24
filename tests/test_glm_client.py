@@ -156,3 +156,10 @@ def test_real_call_roundtrip():
     binary = os.environ.get("NETRUNNER_OPENCODE", "opencode")
     complete = OpencodeComplete(binary=binary, root=ROOT, config=CONFIG)
     assert complete("한 단어로만 답해: 안녕").strip()
+
+
+def test_default_timeout_matches_round_time_limit():
+    from netrunner.contracts import Limits
+    from netrunner.glm_client import DEFAULT_TIMEOUT
+
+    assert float(Limits().max_seconds) == DEFAULT_TIMEOUT
