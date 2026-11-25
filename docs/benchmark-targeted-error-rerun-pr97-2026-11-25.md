@@ -1,32 +1,32 @@
-# PR #97 targeted error-case remeasurement (2026-11-25)
+# PR #97 오류 사례 집중 재측정 결과 (2026-11-25)
 
-## Scope and setup
+## 범위와 조건
 
-This reran the 51 rounds that were invalid in the original fixed-set benchmark, not the full 30-scenario × five-method × three-repeat benchmark. Each prior failing attempt was rerun once with its original method and scenario: B 35, C 7, C-1 2, and C-2 7. B-13 needed one extra attempt because its first run did not reproduce the injected symptom; that extra run scored successfully.
+기존 고정 세트 측정에서 무효였던 51개 라운드만 재실행했습니다. 전체 30개 시나리오 × 5개 방식 × 3회 측정은 다시 돌리지 않았습니다. 과거 실패 건마다 기존 방식과 시나리오를 유지해 한 번씩 실행했습니다: B 35건, C 7건, C-1 2건, C-2 7건입니다. B-13은 첫 실행에서 주입한 증상이 재현되지 않아 한 번 더 실행했고, 재실행은 채점까지 완료했습니다.
 
-- Code under test: [PR #97](https://github.com/Se-joong-Kim/NetRunner/pull/97), head `2d22509`.
-- Model: `opencode-go/glm-5.3-flash` through OpenCode 2.3.0.
-- Runtime: rebuilt Docker experiment network; all final sample runs verified reset.
-- Limits: `Limits.max_seconds=300`, also used as the per-call timeout ceiling. The earlier failure rerun used 120 seconds, so wall-time comparisons are not like-for-like.
-- Baseline counts are from [the 2026-11-24 failure rerun report](./benchmark-failure-reruns-2026-11-24.md).
+- 대상 코드: [PR #97](https://github.com/Se-joong-Kim/NetRunner/pull/97), 커밋 `2d22509`.
+- 모델: OpenCode 2.3.0을 통한 `opencode-go/glm-5.3-flash`.
+- 실행 환경: Docker 실험망을 새로 빌드해 사용했습니다. 최종 실행은 모두 초기화가 확인됐습니다.
+- 시간 제한: `Limits.max_seconds=300`초이며, 모델 호출 제한에도 적용됩니다. 이전 실패 재실행은 120초 제한을 사용했으므로 실행 시간은 직접 비교할 수 없습니다.
+- 이전 결과는 [2026-11-24 실패 라운드 재실행 결과](./benchmark-failure-reruns-2026-11-24.md)를 기준으로 했습니다.
 
-## Results
+## 결과
 
-| Method | Previously scored / invalid | Targeted rerun scored / diagnostic-invalid | Stage correct | Cause correct |
+| 방식 | 이전 채점 완료 / 무효 | 이번 재실행 채점 완료 / 진단 무효 | 단계 정확도 | 원인 정확도 |
 |---|---:|---:|---:|---:|
 | B | 21 / 14 | 35 / 0 | 22/35 (63%) | 22/35 (63%) |
 | C | 6 / 1 | 7 / 0 | 5/7 (71%) | 4/7 (57%) |
 | C-1 | 1 / 1 | 2 / 0 | 0/2 (0%) | 0/2 (0%) |
 | C-2 | 7 / 0 | 7 / 0 | 7/7 (100%) | 7/7 (100%) |
-| **Total** | **35 / 16** | **51 / 0** | **34/51 (67%)** | **33/51 (65%)** |
+| **합계** | **35 / 16** | **51 / 0** | **34/51 (67%)** | **33/51 (65%)** |
 
-All 51 selected cases ultimately produced scored rounds, with reset verified for every final run. One initial B attempt (`FS09-T1-SHOP`) was invalid only because the injected symptom did not reproduce; the single retry reproduced the symptom and scored correctly. There were no final diagnostic-format/action failures in the selected cases.
+최종적으로 선택된 51건 모두 채점됐고 초기화도 확인됐습니다. B의 `FS09-T1-SHOP`은 첫 실행에서 장애 증상이 재현되지 않아 무효였지만, 한 번 더 실행해 증상을 재현하고 채점했습니다. 선택한 사례에서 진단 형식 또는 요청 오류로 무효가 된 최종 실행은 없었습니다.
 
-Scored output is not the same as a correct diagnosis: B and especially C-1 still had substantial stage/cause error rates. This remeasurement supports the PR's targeted reliability changes, not an overall accuracy improvement claim.
+채점 완료가 정답 진단을 뜻하지는 않습니다. 특히 C-1은 단계와 원인 정확도가 모두 낮았습니다. 이번 재측정은 PR의 형식·요청 신뢰성 개선을 뒷받침하는 결과이지, 전체 진단 정확도 향상을 입증하는 결과는 아닙니다.
 
-## Focused regression evidence
+## 변경 정책에 대한 회귀 검증
 
-- 19 selected tests for response parsing, invalid request/evidence retries, deadline/call limits, empty output, and citation validation passed.
-- Replaying the 14 stored persistent B failure responses through the PR decoder accepted all 14; the previous strict JSON parser rejected all 14.
+- 응답 파싱, 잘못된 검사 요청·근거 재요청, 시간·호출 한도, 빈 응답, 근거 인용 검증을 다루는 선택 테스트 19개가 통과했습니다.
+- 이전에 지속 실패한 B 응답 14건을 PR 파서로 재생했을 때 14건 모두 처리됐습니다. 기존 엄격한 JSON 파서는 14건 모두 거부했습니다.
 
-These checks and the 51-case rerun do not replace a full benchmark comparison. Raw run records and HTML reports were kept outside the repository at `/tmp/netrunner-pr97-full-error-results/` to avoid committing response/probe details.
+이 검증과 51건 재실행은 전체 고정 세트 비교를 대체하지 않습니다. 응답·검사 세부 내용이 포함된 원시 실행 기록과 HTML 보고서는 커밋하지 않고 `/tmp/netrunner-pr97-full-error-results/`에 보관했습니다.
