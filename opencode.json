@@ -10,7 +10,9 @@
       "runs/**": "deny",
       "captures/**": "deny",
       "runs": "deny",
-      "captures": "deny"
+      "captures": "deny",
+      "artifacts/benchmark-runs/**": "deny",
+      "artifacts/benchmark-runs": "deny"
     },
     "glob": {
       "*": "ask",
@@ -18,14 +20,17 @@
       "runs/**": "deny",
       "captures/**": "deny",
       "runs": "deny",
-      "captures": "deny"
+      "captures": "deny",
+      "artifacts/benchmark-runs/**": "deny",
+      "artifacts/benchmark-runs": "deny"
     },
     "grep": "deny",
     "edit": {
       "*": "ask",
       "fixtures/**/*.scenario.json": "deny",
       "runs/**": "deny",
-      "captures/**": "deny"
+      "captures/**": "deny",
+      "artifacts/benchmark-runs/**": "deny"
     },
     "shell": "ask",
     "question": "allow",

@@ -20,7 +20,12 @@ DEV_CONFIG = ROOT / "opencode.json"
 # 정답이 든 경로. 파일을 읽고, 찾고, 고치는 도구마다 거부해야 한다.
 # grep은 권한 대상이 경로가 아니라 검색 문자열이라 경로 규칙이 걸리지 않는다
 # (control experiment로 확인). 그래서 grep은 경로 규칙 대신 전면 거부한다.
-ANSWER_PATHS = ("fixtures/**/*.scenario.json", "runs/**", "captures/**")
+ANSWER_PATHS = (
+    "fixtures/**/*.scenario.json",
+    "runs/**",
+    "captures/**",
+    "artifacts/benchmark-runs/**",
+)
 PATH_TOOLS = ("read", "glob", "edit")
 
 
@@ -97,7 +102,7 @@ def test_dev_agents_deny_grep_because_its_rule_is_not_path_based():
 
 
 @pytest.mark.parametrize("tool", ("read", "glob"))
-@pytest.mark.parametrize("folder", ("runs", "captures"))
+@pytest.mark.parametrize("folder", ("runs", "captures", "artifacts/benchmark-runs"))
 def test_dev_agents_deny_answer_folder_names_for_pattern_tools(tool, folder):
     # "runs/**" 규칙은 "runs" 자체를 가리키는 호출에 걸리지 않는다(control experiment로 확인).
     assert _dev_permission()[tool][folder] == "deny"
