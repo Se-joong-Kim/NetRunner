@@ -142,9 +142,11 @@ def test_capture_comparison_preserves_original_probe_and_packet_citations(method
 
 @pytest.mark.parametrize("ref", ["pcap:p2#1", "pcap:p1#0", "pcap:p1#1-3", "pcap:p1#2-1"])
 def test_capture_citation_requires_a_recorded_packet_range(ref):
+    invalid = {"findings": [{"stage": "TCP", "cause": "연결 거부", "evidence": [ref]}]}
     diagnoser, _ = model_with_responses(
         {"check": "capture"},
-        {"findings": [{"stage": "TCP", "cause": "연결 거부", "evidence": [ref]}]},
+        invalid,
+        invalid,
         method="C-2",
     )
     runner = Mock()
@@ -166,7 +168,9 @@ def test_referee_rejects_model_capture_request_in_c1():
             "faults": [{"id": "T2", "params": {"port": 80}}],
         }
     )
-    diagnoser, _ = model_with_responses({"check": "capture"}, method="C-1")
+    diagnoser, model = model_with_responses(
+        {"check": "capture"}, {"check": "capture"}, method="C-1"
+    )
     runner = Mock()
     referee = Referee(MockLab(), diagnoser, LabInfo.load(ROOT / "config/lab.json"), runner=runner)
 
@@ -175,6 +179,7 @@ def test_referee_rejects_model_capture_request_in_c1():
     assert record["status"] == "invalid"
     assert "허용되지 않은 검사" in record["invalid_reason"]
     assert record["reset_verified"]
+    assert model.call_count == 2
     runner.run_probe.assert_not_called()
 
 
@@ -186,7 +191,7 @@ def test_referee_rejects_model_capture_request_in_c1():
     ],
 )
 def test_rejects_model_supplied_targets_and_unobserved_evidence(action):
-    diagnoser, _ = model_with_responses(action)
+    diagnoser, _ = model_with_responses(action, action)
     runner = Mock()
     limits = Limits()
     lab = LabInfo.load(ROOT / "config/lab.json")
@@ -271,7 +276,7 @@ def test_glm_can_use_path_capture_and_tls_checks_for_the_brief_target():
 
 @pytest.mark.parametrize(("check", "allowed"), [("capture", {"ping"}), ("tls", {"openssl"})])
 def test_glm_rejects_checks_not_offered_for_the_round(check, allowed):
-    diagnoser, _ = model_with_responses({"check": check})
+    diagnoser, _ = model_with_responses({"check": check}, {"check": check})
     runner = Mock()
     limits = Limits()
     lab = LabInfo.load(ROOT / "config/lab.json")
@@ -280,6 +285,50 @@ def test_glm_rejects_checks_not_offered_for_the_round(check, allowed):
     with pytest.raises(ContractError, match="허용되지 않은 검사"):
         diagnoser.diagnose(RoundBrief("r1", "http://shop.lab/", "접속 실패", limits), toolbox)
 
+    runner.run_probe.assert_not_called()
+
+
+@pytest.mark.parametrize("invalid_kind", ["target", "evidence"])
+def test_glm_can_correct_a_request_or_citation_without_repeating_a_probe(invalid_kind):
+    check = {"check": "http"}
+    finding = {"stage": "TCP", "cause": "연결 거부", "evidence": ["probe:p1"]}
+    conclusion = {"findings": [finding]}
+    if invalid_kind == "target":
+        actions = ({**check, "target": "different host"}, check, conclusion)
+        expected_refs = []
+    else:
+        actions = (check, {"findings": [{**finding, "evidence": ["probe:p9"]}]}, conclusion)
+        expected_refs = ["probe:p1"]
+    diagnoser, model = model_with_responses(*actions, method="C-1")
+    runner = Mock()
+    runner.run_probe.return_value = ProbeResult(True, "Connection refused")
+    limits = Limits(max_llm_calls=3, max_seconds=30)
+    toolbox = Toolbox(runner, LabInfo.load(ROOT / "config/lab.json"), limits, frozenset({"curl"}))
+
+    result = diagnoser.diagnose(RoundBrief("r1", "http://shop.lab/", "접속 실패", limits), toolbox)
+
+    assert result.findings == [Finding("TCP", "연결 거부", [Evidence("probe:p1")])]
+    assert result.llm_calls == model.call_count == 3
+    runner.run_probe.assert_called_once_with("curl", {"url": "http://shop.lab/"})
+    retry = model.call_args_list[1 if invalid_kind == "target" else 2].kwargs
+    assert "직전 응답의 형식이 잘못됐다" in retry["input"]
+    assert json.loads(retry["input"].splitlines()[-1])["valid_probe_refs"] == expected_refs
+    assert 0 < retry["timeout"] <= limits.max_seconds
+
+
+def test_glm_does_not_retry_an_invalid_check_after_round_deadline(monkeypatch):
+    clock = iter([0, 1, 5])
+    monkeypatch.setattr("netrunner.diagnoser.time.monotonic", lambda: next(clock))
+    diagnoser, model = model_with_responses({"check": "http", "target": "different host"})
+    runner = Mock()
+    limits = Limits(max_seconds=5)
+    toolbox = Toolbox(runner, LabInfo.load(ROOT / "config/lab.json"), limits, frozenset({"curl"}))
+
+    with pytest.raises(ContractError, match="재요청 한도 소진"):
+        diagnoser.diagnose(RoundBrief("r1", "http://shop.lab/", "접속 실패", limits), toolbox)
+
+    assert model.call_count == 1
+    assert model.call_args.kwargs["timeout"] == 4
     runner.run_probe.assert_not_called()
 
 

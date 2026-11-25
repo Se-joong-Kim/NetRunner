@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from netrunner.breaker import CompletionError
 from netrunner.contracts import ContractError, Finding, Limits, ProbeResult, RoundBrief, Scenario
 from netrunner.glm_baseline import GlmBaselineDiagnoser
 from netrunner.glm_client import OpencodeComplete
@@ -18,7 +19,11 @@ TARGET = "http://shop.lab/"
 
 def baseline_with_responses(*actions):
     def reply(argv, **kwargs):
-        event = {"type": "text", "part": {"text": json.dumps(next(responses))}}
+        action = next(responses)
+        event = {
+            "type": "text",
+            "part": {"text": action if isinstance(action, str) else json.dumps(action)},
+        }
         return subprocess.CompletedProcess(argv, 0, json.dumps(event), "")
 
     responses = iter(actions)
@@ -94,6 +99,40 @@ def test_baseline_retries_invalid_output_without_accessing_toolbox(invalid):
     assert result.findings == [Finding("TCP", "연결 거부")]
     assert result.llm_calls == model.call_count == 2
     assert not tools.mock_calls
+
+
+@pytest.mark.parametrize(
+    "wrapper", ["```json\n{}\n```", "```\n{}\n```\n설명입니다.", "{}\n`findings` 설명입니다."]
+)
+def test_baseline_reads_one_wrapped_diagnosis_without_retrying(wrapper):
+    payload = '{"findings":[{"stage":"TCP","cause":"연결 거부"}]}'
+    diagnoser, model = baseline_with_responses(wrapper.format(payload))
+
+    result = diagnoser.diagnose(RoundBrief("r1", TARGET, "접속 실패"), Mock())
+
+    assert result.findings == [Finding("TCP", "연결 거부")]
+    assert result.llm_calls == model.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "invalid", ['{"findings":[', '{"findings":[]}\n{"findings":[]}', '```json\n{"findings":[]}']
+)
+def test_baseline_rejects_ambiguous_or_incomplete_wrappers(invalid):
+    diagnoser, model = baseline_with_responses(invalid, invalid)
+
+    with pytest.raises(ContractError, match="JSON 객체"):
+        diagnoser.diagnose(RoundBrief("r1", TARGET, "접속 실패"), Mock())
+
+    assert model.call_count == 2
+
+
+def test_baseline_distinguishes_no_findings_from_empty_model_text():
+    diagnoser, _ = baseline_with_responses({"findings": []}, "")
+    brief = RoundBrief("r1", TARGET, "접속 실패")
+
+    assert diagnoser.diagnose(brief, Mock()).findings == []
+    with pytest.raises(CompletionError, match="모델 응답이 비어 있음"):
+        diagnoser.diagnose(brief, Mock())
 
 
 @pytest.mark.parametrize("limits", [Limits(max_llm_calls=0), Limits(max_seconds=0)])
