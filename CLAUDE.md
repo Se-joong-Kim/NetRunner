@@ -55,13 +55,18 @@ uv run ruff format
 - `docker_lab.py`: `Lab`의 실제 구현(Docker Compose 실험망, 단일 장애 16종, 검사 실행 `run_probe`). `__main__.py`의 `LAB_IMPLS`에 등록해 `run --impl`로 고른다.
 - `__main__.py`의 `DIAGNOSER_IMPLS`: `match`와 `run --diagnoser`에 꽂을 진단기. 실제 Diagnoser가 생기면 여기에 한 줄 등록한다. 기본 `none`(`NoDiagnosis`)은 원인을 답하지 않는 자리표시라, Diagnoser 없이도 Breaker 제안의 검증 통과·재현·정상화를 잴 수 있다. 기록의 `model`이 `none`이라 진단 지표와 섞이지 않는다. `run`에 `--diagnoser`를 여러 번 주면 반복 → 시나리오 → 진단기 순서로 섞어 돌린다. 기본값 `replay`는 저장된 진단을 재생하는 모드라 다른 진단기와 섞지 않는다.
 - `tools.py`: Diagnoser가 쓰는 검사 도구 목록의 단일 출처(이름, 인자, 허용 값, LLM용 설명, 방식별 묶음).
+- 진단 방식 다섯 개(설계안 9.2절)와 `DIAGNOSER_IMPLS` 이름: A `rules`, B `glm-b`, C `glm-c`, C-1 `glm-c1`, C-2 `glm-c2`. B만 쓰는 입력(curl 오류 한 줄)은 심판이 `BaselineBrief`로 넣는다.
+- `diagnoser.py`의 `GlmDiagnoser`: 방식 C·C-1·C-2. `method`로 고르고, 검사 후보는 도구 창구가 연 도구 안에서 고른다. C는 캡처 출력을 `capture_summary.py`로 요약해 넣고(패킷 번호 유지), C-2는 원문을 넣는다.
+- `glm_baseline.py`: 방식 B(`GlmBaselineDiagnoser`). 도구 없이 증상과 curl 오류만으로 답한다.
+- `diagnosis_response.py`: GLM 응답에서 JSON 객체 하나를 꺼낸다(코드 블록 등으로 감싼 응답 포함). B와 C 계열이 같이 쓴다.
 - `rule_diagnoser.py`: 방식 A 규칙 기준선(`RuleDiagnoser`, `run --diagnoser rules`). LLM 없이 도구 창구로 정해진 검사를 하고 if-else 규칙으로 장애 목록의 원인만 낸다. 규칙은 장애 정의와 개발용 장애로 정하고, 고정 세트 결과에 맞춰 고치지 않는다. 채점 신호(`faults.py`의 `signals`)를 가져다 쓰지 않는다.
 - `toolbox.py`: 심판이 라운드마다 만들어 Diagnoser에 넘기는 도구 창구. 인자·한도를 검사하고 실제 출력을 기록하며, 채점은 이 기록으로만 한다. 실험망 쪽은 `lab.py`의 `ProbeRunner.run_probe` 하나를 구현한다.
 - `faults.py`: 장애 16종의 단일 출처. 정답 라벨, 매개변수 범위, 관측 차단 여부, 근거 지지 판정용 신호를 가진다. 검증, 채점, 보고서가 모두 여기서 읽는다.
-- `validate.py`(제안 검사), `scoring.py`(채점), `report.py`(지표와 HTML): `referee.py`가 조립한다.
+- `validate.py`(제안 검사), `scoring.py`(채점), `report.py`(지표와 HTML): `referee.py`가 조립한다. 정확도 분모에는 증상이 재현된 뒤 진단기가 실패한 라운드(`진단 실패`)를 넣고, 실험망 쪽 무효 라운드는 뺀다(#83, #89).
 - `records.py`: 정답이 든 기록의 기본 위치(`~/netrunner-private/runs`)와 권한(폴더 700, 파일 600). 기록을 쓰는 코드는 모두 이 모듈의 `ensure_private_dir`, `open_private`, `write_private_text`를 거친다.
 - `config/lab.json`: 실험망 주소. 실험망 담당이 관리한다.
-- `fixtures/first_integration`(시연 두 라운드)과 `fixtures/scoring_examples`(채점 사례)는 `<이름>.scenario.json`과 `<이름>.diagnosis.json` 짝으로 이루어지며, `demo`와 테스트가 이 이름 규칙에 의존한다. `fixtures/fixed_set`은 고정 세트 초안 15개(장애 7종, 단일 장애, `fs*.scenario.json`)다. 측정 전에 동결한다(#14). 16종이 실험망에 들어온 뒤(#63) 15개 모두 `lab-check`를 통과했다.
+- `fixtures/first_integration`(시연 두 라운드)과 `fixtures/scoring_examples`(채점 사례)는 `<이름>.scenario.json`과 `<이름>.diagnosis.json` 짝으로 이루어지며, `demo`와 테스트가 이 이름 규칙에 의존한다. `fixtures/fixed_set`은 고정 세트 30개(장애 16종, 단일 장애, `fs*.scenario.json`)다. `df932a3`에서 전원 동의로 동결했다(#68). 고치려면 이슈로 전원 동의를 받고 이미 잰 결과는 다시 잰다. 동결 시점에 `lab-check --repeat 3`이 90/90 통과했다.
+- `artifacts/benchmark-runs/<측정일>/`: 공개하기로 한 측정 기록(정답 포함, 2026-11-25 결정). 측정 결과 요약은 `docs/benchmark-*.md`와 `docs/results-summary-*.md`에 있다.
 
 ### 지켜야 할 경계
 
