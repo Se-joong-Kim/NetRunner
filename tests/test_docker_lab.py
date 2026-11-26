@@ -1,12 +1,13 @@
 import json
 import os
 import subprocess
+from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from netrunner.__main__ import cmd_lab_check
+from netrunner.__main__ import _lab_check_observability, cmd_lab_check
 from netrunner.contracts import FaultSpec, LabResult, Scenario, read_json
 from netrunner.diagnoser import ReplayDiagnoser
 from netrunner.docker_lab import ROOT, DockerLab
@@ -371,6 +372,181 @@ def test_lab_check_recovers_dirty_start(monkeypatch, tmp_path):
     assert cmd_lab_check(args) == 0
     steps = json.loads(next(tmp_path.glob("*.jsonl")).read_text())["steps"]
     assert not steps["health_check_initial"]["ok"] and steps["health_check"]["ok"]
+
+
+def test_lab_check_combo_observability_handles_path_and_https_masking():
+    info = LabInfo.load(ROOT / "config/lab.json")
+    base = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json")
+    )
+    cases = [
+        ([FaultSpec("T2", {"port": 80}), FaultSpec("H1")], [True, False]),
+        ([FaultSpec("H1"), FaultSpec("T2", {"port": 80})], [False, True]),
+        (
+            [FaultSpec("D1", {"domain": "shop.lab"}), FaultSpec("N1", {"delay_ms": 80})],
+            [True, True],
+        ),
+    ]
+    for faults, expected in cases:
+        base.faults = faults
+        assert list(_lab_check_observability(base, info).values()) == expected
+    base.target_url = "https://shop.lab/"
+    base.faults = [FaultSpec("H1"), FaultSpec("S1")]
+    assert list(_lab_check_observability(base, info).values()) == [False, True]
+
+
+def test_verify_lab_combo_serializes_per_fault_evidence(monkeypatch):
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json")
+    )
+    scenario.faults = [FaultSpec("N1", {"delay_ms": 80}), FaultSpec("H1")]
+    monkeypatch.setattr(
+        lab,
+        "_run",
+        lambda *args, **kwargs: {
+            "exit_code": 0,
+            "stdout": "\n".join("64 bytes from web: time=80 ms" for _ in range(4)),
+            "stderr": "",
+        },
+    )
+    verified_faults = []
+
+    def verify(single):
+        verified_faults.append(single.faults[0].id)
+        return LabResult(True, "stub verification", {"fault_id": single.faults[0].id})
+
+    monkeypatch.setattr(lab, "verify_symptom", verify)
+    result = lab.verify_lab_combo(scenario, {"N1": True, "H1": True})
+    serialized = asdict(result)
+    checks = serialized["observations"]["fault_checks"]
+
+    assert serialized["ok"] and serialized["observations"]["observable_faults"] == ["N1", "H1"]
+    assert verified_faults == ["H1"]
+    assert checks["N1"]["observable"] and checks["N1"]["verified"]
+    assert checks["N1"]["result"]["detail"] == "N1 증상 재현"
+    assert checks["H1"]["observable"] and checks["H1"]["verified"]
+    assert checks["H1"]["result"]["detail"] == "stub verification"
+
+
+def test_lab_check_combo_injects_all_and_records_per_fault(monkeypatch, tmp_path):
+    scenario_dir = tmp_path / "input"
+    scenario_dir.mkdir()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json")
+    )
+    scenario.faults = [FaultSpec("T2", {"port": 80}), FaultSpec("H1")]
+    (scenario_dir / "combo.scenario.json").write_text(json.dumps(asdict(scenario)))
+
+    class FakeLab:
+        def __init__(self, config):
+            self.injected = []
+
+        def health_check(self, url):
+            return LabResult(True)
+
+        def inject(self, fault):
+            self.injected.append(fault.id)
+            return LabResult(True)
+
+        def verify_lab_combo(self, scenario, observable):
+            assert self.injected == ["H1", "T2"]
+            assert observable == {"T2": True, "H1": False}
+            return LabResult(True, observations={"fault_checks": {"H1": {"masked": True}}})
+
+        def reset(self):
+            return LabResult(True)
+
+    monkeypatch.setattr("netrunner.__main__.DockerLab", FakeLab)
+    args = SimpleNamespace(lab=ROOT / "config/lab.json", dir=scenario_dir, out=tmp_path, repeat=1)
+    assert cmd_lab_check(args) == 0
+    steps = json.loads(next(tmp_path.glob("*.jsonl")).read_text())["steps"]
+    assert [item["fault_id"] for item in steps["inject_faults"]] == ["H1", "T2"]
+    assert steps["verify_symptom"]["ok"]
+
+
+def test_lab_check_rejects_n1_n2_before_constructing_docker_lab(monkeypatch, tmp_path):
+    scenario_dir = tmp_path / "input"
+    scenario_dir.mkdir()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json")
+    )
+    scenario.faults = [
+        FaultSpec("N1", {"delay_ms": 80}),
+        FaultSpec("N2", {"loss_pct": 10}),
+    ]
+    (scenario_dir / "collision.scenario.json").write_text(json.dumps(asdict(scenario)))
+
+    def fail_construct(*args):
+        pytest.fail("DockerLab must not be constructed for the N1+N2 collision")
+
+    monkeypatch.setattr("netrunner.__main__.DockerLab", fail_construct)
+    args = SimpleNamespace(lab=ROOT / "config/lab.json", dir=scenario_dir, out=tmp_path, repeat=1)
+    assert cmd_lab_check(args) == 1
+
+
+def test_lab_check_rejects_nonfixed_combos_before_constructing_docker_lab(monkeypatch, tmp_path):
+    scenario_dir = tmp_path / "input"
+    scenario_dir.mkdir()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json")
+    )
+    scenario.origin = "breaker"
+    scenario.faults = [FaultSpec("D1", {"domain": "shop.lab"}), FaultSpec("T2", {"port": 80})]
+    (scenario_dir / "breaker_combo.scenario.json").write_text(json.dumps(asdict(scenario)))
+
+    monkeypatch.setattr(
+        "netrunner.__main__.DockerLab",
+        lambda *args: pytest.fail("non-fixed combos must be rejected before DockerLab"),
+    )
+    args = SimpleNamespace(lab=ROOT / "config/lab.json", dir=scenario_dir, out=tmp_path, repeat=1)
+    assert cmd_lab_check(args) == 1
+
+
+def test_lab_check_partial_combo_injection_still_resets_and_skips_verification(
+    monkeypatch, tmp_path
+):
+    scenario_dir = tmp_path / "input"
+    scenario_dir.mkdir()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json")
+    )
+    scenario.faults = [FaultSpec("H1"), FaultSpec("T2", {"port": 80})]
+    (scenario_dir / "partial.scenario.json").write_text(json.dumps(asdict(scenario)))
+
+    class FakeLab:
+        def __init__(self, config):
+            self.events = []
+
+        def health_check(self, url):
+            self.events.append("health")
+            return LabResult(True)
+
+        def inject(self, fault):
+            self.events.append(f"inject:{fault.id}")
+            return LabResult(fault.id == "H1")
+
+        def verify_lab_combo(self, *args):
+            pytest.fail("verification must not run after partial injection")
+
+        def reset(self):
+            self.events.append("reset")
+            return LabResult(True)
+
+    instances = []
+
+    def construct(config):
+        lab = FakeLab(config)
+        instances.append(lab)
+        return lab
+
+    monkeypatch.setattr("netrunner.__main__.DockerLab", construct)
+    args = SimpleNamespace(lab=ROOT / "config/lab.json", dir=scenario_dir, out=tmp_path, repeat=1)
+    assert cmd_lab_check(args) == 1
+    assert instances[0].events == ["health", "inject:H1", "inject:T2", "reset", "health"]
+    steps = json.loads(next(tmp_path.glob("*.jsonl")).read_text())["steps"]
+    assert "verify_symptom" not in steps
+    assert steps["reset"]["ok"] and steps["health_check_after"]["ok"]
 
 
 @pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")

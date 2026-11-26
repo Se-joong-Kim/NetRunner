@@ -48,7 +48,7 @@ python -m pytest tests                          # 심판 테스트
 
 ## 2. 심판 ↔ 실험망: `Lab` 인터페이스
 
-`netrunner/lab.py`의 `Lab`을 만족하는 `netrunner/docker_lab.py`의 `DockerLab`은 아래 "장애 목록"의 16종을 단일 장애로 지원한다(#63). 복합 장애는 아직 지원하지 않는다. `MockLab`은 모의 실행에 사용한다.
+`netrunner/lab.py`의 `Lab`을 만족하는 `netrunner/docker_lab.py`의 `DockerLab`은 아래 "장애 목록"의 16종을 단일 장애로 지원한다(#63). 별도 `lab-check` 경로에서 고정 시나리오의 2~3개 조합 장애를 검사할 수 있다(#102). 심판의 `Lab` 인터페이스에는 변화가 없다. `MockLab`은 모의 실행에 사용한다.
 
 | 함수 | 하는 일 | 반환 |
 |---|---|---|

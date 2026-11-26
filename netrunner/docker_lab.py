@@ -9,6 +9,7 @@ import re
 import subprocess
 import time
 import uuid
+from dataclasses import asdict, replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -24,6 +25,11 @@ COMPOSE_FILE = ROOT / "compose.yaml"
 # 덮어쓰기 파일은 그곳에서만 internal을 끈다. 외부 차단은 lab/start.sh의 기본 경로 삭제에 맡긴다.
 WINDOWS_OVERRIDE = ROOT / "compose.windows.yaml"
 IS_WINDOWS = os.name == "nt"
+
+
+def _ping_rtt_samples(output: str) -> list[float]:
+    """Ping 출력의 왕복 시간(ms) 표본을 뽑는다."""
+    return [float(value) for value in re.findall(r"time[=<](\d+(?:\.\d+)?)\s*ms", output)]
 
 
 def compose_files(windows: bool) -> list[Path]:
@@ -688,9 +694,7 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
         elif fault.id == "N1":
             ping = self._run("client", "ping", "-c", "4", "-W", "3", self.config["web_ip"])
             observations["ping"] = ping
-            samples = [
-                float(v) for v in re.findall(r"time[=<](\d+(?:\.\d+)?)\s*ms", ping["stdout"])
-            ]
+            samples = _ping_rtt_samples(ping["stdout"])
             threshold = fault.params["delay_ms"] / 2
             ok = (
                 dns_ok
@@ -903,6 +907,51 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
             )
         ok = ok and capture["exit_code"] == 0 and capture["packets"] > 0 and Path(path).is_file()
         return LabResult(ok, f"{fault.id} 증상 {'재현' if ok else '확인 실패'}", observations)
+
+    def verify_lab_combo(self, scenario: Scenario, observable: dict[str, bool]) -> LabResult:
+        """lab-check 전용 복수 장애 확인. 심판/Breaker 경로에서는 호출하지 않는다.
+
+        가려진 장애는 확인하지 않고 false로 기록한다. N1은 다른 계층 장애의
+        DNS/HTTP 결과와 무관하게 고정 웹 IP ping으로 직접 확인한다.
+        """
+        checks: dict[str, dict] = {}
+        for fault in scenario.faults:
+            if not observable[fault.id]:
+                checks[fault.id] = {
+                    "observable": False,
+                    "verified": False,
+                    "masked": True,
+                    "reason": "선행 장애에 가려져 확인하지 않음",
+                }
+                continue
+            if fault.id == "N1":
+                ping = self._run("client", "ping", "-c", "4", "-W", "3", self.config["web_ip"])
+                samples = _ping_rtt_samples(ping["stdout"])
+                verified = (
+                    ping["exit_code"] == 0
+                    and len(samples) >= 4
+                    and sum(samples) / len(samples) >= fault.params["delay_ms"] / 2
+                )
+                result = LabResult(
+                    verified,
+                    f"N1 증상 {'재현' if verified else '확인 실패'}",
+                    {"ping": ping, "rtt_samples_ms": samples},
+                )
+            else:
+                result = self.verify_symptom(replace(scenario, faults=[fault]))
+            checks[fault.id] = {
+                "observable": True,
+                "verified": result.ok,
+                "masked": False,
+                "result": asdict(result),
+            }
+        visible = [fault.id for fault in scenario.faults if observable[fault.id]]
+        ok = bool(visible) and all(checks[fault_id]["verified"] for fault_id in visible)
+        return LabResult(
+            ok,
+            "복수 장애 가시 증상 " + ("확인 완료" if ok else "확인 실패"),
+            {"fault_checks": checks, "observable_faults": visible},
+        )
 
     def reset(self) -> LabResult:
         """캡처를 멈추고 DNS와 방화벽을 정상 설정으로 되돌린다."""

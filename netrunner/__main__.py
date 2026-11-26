@@ -238,7 +238,6 @@ def cmd_report(args) -> int:
 def cmd_lab_check(args) -> int:
     """실제 실험망만 검사한다. 저장된 진단 결과를 실제 진단으로 기록하지 않는다."""
     info = LabInfo.load(args.lab)
-    lab = DockerLab(args.lab)
     files = sorted(Path(args.dir).glob("*.scenario.json"))
     if not files or args.repeat < 1:
         print("시나리오 파일이 없거나 반복 횟수가 1보다 작음", file=sys.stderr)
@@ -246,17 +245,36 @@ def cmd_lab_check(args) -> int:
     scenarios = [Scenario.from_dict(read_json(p)) for p in files]
     for scenario in scenarios:
         result = validate(scenario, info)
-        if not result.ok or len(scenario.faults) != 1:
+        ids = {fault.id for fault in scenario.faults}
+        reasons = []
+        if not result.ok:
+            reasons.extend(result.errors)
+        if len(scenario.faults) > 1 and scenario.origin != "fixed":
+            reasons.append("복수 장애 lab-check은 origin=fixed인 시나리오만 지원")
+        if len(scenario.faults) > 1 and ids.intersection({"B1", "B2"}):
+            reasons.append("B1/B2를 포함한 복수 장애는 lab-check에서 지원하지 않음")
+        if {"N1", "N2"}.issubset(ids):
+            reasons.append("N1+N2는 클라이언트 root qdisc 충돌로 함께 주입할 수 없음")
+        if ids.intersection({"D1", "D2", "D3"}) and "D4" in ids:
+            reasons.append("D1/D2/D3+D4는 DNS 응답 조건이 충돌해 lab-check에서 지원하지 않음")
+        path_faults = {"N1", "N2", "N3", "N4"}
+        if ids.intersection({"N3", "N4"}) and ids - path_faults:
+            reasons.append(
+                "N3/N4와 비경로 장애 조합은 단일 장애 검증의 HTTP 전제와 충돌해 지원하지 않음"
+            )
+        if reasons:
             print(
-                f"{scenario.scenario_id}: 시나리오 오류 {result.errors} (단일 장애만 지원)",
+                f"{scenario.scenario_id}: 시나리오 오류 {reasons}",
                 file=sys.stderr,
             )
             return 1
+    lab = DockerLab(args.lab)
     output = ensure_private_dir(args.out)
     path = output / f"lab-check-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.jsonl"
     for _ in range(args.repeat):
         for scenario in scenarios:
             steps = {}
+            observable = _lab_check_observability(scenario, info)
             try:
                 initial = lab.health_check(scenario.target_url)
                 if not initial.ok:
@@ -267,10 +285,29 @@ def cmd_lab_check(args) -> int:
                         initial = lab.health_check(scenario.target_url)
                 steps["health_check"] = asdict(initial)
                 if initial.ok:
-                    injection = lab.inject(scenario.faults[0])
-                    steps["inject"] = asdict(injection)
-                    if injection.ok:
-                        steps["verify_symptom"] = asdict(lab.verify_symptom(scenario))
+                    if len(scenario.faults) == 1:
+                        injection = lab.inject(scenario.faults[0])
+                        steps["inject"] = asdict(injection)
+                        if injection.ok:
+                            steps["verify_symptom"] = asdict(lab.verify_symptom(scenario))
+                    else:
+                        injections = []
+                        ordered_faults = sorted(
+                            scenario.faults,
+                            key=lambda fault: fault.id in {"T1", "T2"},
+                        )
+                        for fault in ordered_faults:
+                            result = lab.inject(fault)
+                            injections.append({"fault_id": fault.id, **asdict(result)})
+                            if not result.ok:
+                                break
+                        steps["inject_faults"] = injections
+                        if len(injections) == len(scenario.faults) and all(
+                            result["ok"] for result in injections
+                        ):
+                            steps["verify_symptom"] = asdict(
+                                lab.verify_lab_combo(scenario, observable)
+                            )
             finally:
                 steps["reset"] = asdict(lab.reset())
                 steps["health_check_after"] = asdict(lab.health_check(scenario.target_url))
@@ -282,15 +319,18 @@ def cmd_lab_check(args) -> int:
                         )
                         + "\n"
                     )
-            ok = all(
-                steps.get(name, {}).get("ok", False)
-                for name in (
-                    "health_check",
-                    "inject",
-                    "verify_symptom",
-                    "reset",
-                    "health_check_after",
-                )
+            inject_ok = (
+                steps.get("inject", {}).get("ok", False)
+                if len(scenario.faults) == 1
+                else len(steps.get("inject_faults", [])) == len(scenario.faults)
+                and all(item["ok"] for item in steps["inject_faults"])
+            )
+            ok = (
+                steps.get("health_check", {}).get("ok", False)
+                and inject_ok
+                and steps.get("verify_symptom", {}).get("ok", False)
+                and steps.get("reset", {}).get("ok", False)
+                and steps.get("health_check_after", {}).get("ok", False)
             )
             print(f"{scenario.scenario_id}: {'성공' if ok else '실패'}")
             if not ok:
@@ -298,6 +338,18 @@ def cmd_lab_check(args) -> int:
                 return 1
     print(f"기록: {path}")
     return 0
+
+
+def _lab_check_observability(scenario: Scenario, info: LabInfo) -> dict[str, bool]:
+    """lab-check용 가시성. HTTPS TLS 오류도 뒤 HTTP 오류를 가리는 것으로 본다."""
+    base = validate(scenario, info).observable
+    ids = {item.id for item in scenario.faults}
+    visible = {item.id: base[index] for index, item in enumerate(scenario.faults)}
+    if ids.intersection({"S1", "S2"}):
+        for fault_id in ("H1", "H2"):
+            if fault_id in visible:
+                visible[fault_id] = False
+    return visible
 
 
 def format_proposal_summary(
