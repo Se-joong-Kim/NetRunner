@@ -1,0 +1,20 @@
+{
+  "scenario_id": "CS04-D3-N1-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "D3",
+      "params": {}
+    },
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 300,
+        "jitter_ms": 50
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D3 UDP 53 차단, N1 지연"
+}

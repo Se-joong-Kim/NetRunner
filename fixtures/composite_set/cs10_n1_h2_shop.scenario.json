@@ -1,0 +1,20 @@
+{
+  "scenario_id": "CS10-N1-H2-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 300,
+        "jitter_ms": 50
+      }
+    },
+    {
+      "id": "H2",
+      "params": {}
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "N1 지연, H2 리다이렉트 순환"
+}

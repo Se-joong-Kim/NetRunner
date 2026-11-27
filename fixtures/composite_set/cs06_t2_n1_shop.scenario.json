@@ -1,0 +1,22 @@
+{
+  "scenario_id": "CS06-T2-N1-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "T2",
+      "params": {
+        "port": 80
+      }
+    },
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 300,
+        "jitter_ms": 50
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "T2 80번 포트 RST, N1 지연"
+}
