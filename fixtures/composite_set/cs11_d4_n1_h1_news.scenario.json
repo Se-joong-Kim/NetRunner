@@ -1,0 +1,27 @@
+{
+  "scenario_id": "CS11-D4-N1-H1-NEWS",
+  "target_url": "http://news.lab/",
+  "faults": [
+    {
+      "id": "D4",
+      "params": {
+        "domain": "news.lab",
+        "delay_ms": 2000
+      }
+    },
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 300,
+        "jitter_ms": 50
+      }
+    },
+    {
+      "id": "H1",
+      "params": {}
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D4 news.lab DNS 지연, N1 지연, H1 502"
+}

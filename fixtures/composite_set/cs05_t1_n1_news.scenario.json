@@ -1,0 +1,22 @@
+{
+  "scenario_id": "CS05-T1-N1-NEWS",
+  "target_url": "http://news.lab/",
+  "faults": [
+    {
+      "id": "T1",
+      "params": {
+        "port": 80
+      }
+    },
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 300,
+        "jitter_ms": 50
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "T1 80번 포트 무응답, N1 지연"
+}

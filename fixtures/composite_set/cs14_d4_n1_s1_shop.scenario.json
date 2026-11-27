@@ -1,0 +1,27 @@
+{
+  "scenario_id": "CS14-D4-N1-S1-SHOP",
+  "target_url": "https://shop.lab/",
+  "faults": [
+    {
+      "id": "D4",
+      "params": {
+        "domain": "shop.lab",
+        "delay_ms": 1000
+      }
+    },
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 300,
+        "jitter_ms": 50
+      }
+    },
+    {
+      "id": "S1",
+      "params": {}
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D4 shop.lab DNS 지연, N1 지연, S1 만료 인증서"
+}
