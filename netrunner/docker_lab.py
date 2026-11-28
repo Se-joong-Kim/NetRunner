@@ -683,7 +683,13 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
         dns_timeout = 5 if fault.id == "D4" else 2
         primary = self._dns(self.hosts["dns"], domain, dns_timeout)
         alternate = self._dns(self.hosts["alt_dns"], domain, dns_timeout)
-        curl = self._curl(scenario.target_url)
+        # H1 is often checked alongside D4/N1, where DNS can take longer than
+        # curl's default deadline even though the HTTP symptom is reachable.
+        curl = (
+            self._curl(scenario.target_url, "--max-time", "15")
+            if fault.id == "H1"
+            else self._curl(scenario.target_url)
+        )
         observations = {
             "dns": primary,
             "alt_dns": alternate,
