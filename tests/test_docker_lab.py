@@ -216,13 +216,14 @@ def test_n4_keeps_load_active_after_symptom_verification(monkeypatch, tmp_path):
         "_curl",
         lambda *a: {"exit_code": 0, "stdout": "200 0 0 0", "stderr": ""},
     )
-    monkeypatch.setattr(
-        lab,
-        "_run",
-        lambda *a, **kw: (
-            events.append("ping") or {"exit_code": 0, "stdout": next(ping_outputs), "stderr": ""}
-        ),
-    )
+
+    def run(*args, **kwargs):
+        if args[:2] == ("client", "curl"):
+            return {"exit_code": 0, "stdout": "0.001 2.100 65536", "stderr": ""}
+        events.append("ping")
+        return {"exit_code": 0, "stdout": next(ping_outputs), "stderr": ""}
+
+    monkeypatch.setattr(lab, "_run", run)
     monkeypatch.setattr(lab, "_stop_load", lambda: events.append("stop") or {"exit_code": 0})
     monkeypatch.setattr(lab, "_start_load", lambda: events.append("start") or {"exit_code": 0})
     monkeypatch.setattr(
