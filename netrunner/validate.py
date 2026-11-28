@@ -127,7 +127,9 @@ def observability(faults: list[Fault]) -> list[bool]:
     경로 장애는 ping·tracepath로 서버 IP에 직접 확인할 수 있으므로 가려지지 않는다.
     """
     return [
-        f.stage == "경로" or not any(g.blocking and g.layer < f.layer for g in faults)
+        f.stage == "경로"
+        or not any(g.blocking and g.layer < f.layer for g in faults)
+        and not (f.id in {"H1", "H2"} and any(g.id in {"S1", "S2"} for g in faults))
         for f in faults
     ]
 
@@ -220,6 +222,16 @@ def validate(scenario: Scenario, lab: LabInfo) -> ValidationResult:
         both = sorted(group.intersection(ids))
         if len(both) > 1:
             r.errors.append(f"faults: 함께 걸 수 없는 조합 {both}")
+    id_set = set(ids)
+    if {"N1", "N2"}.issubset(id_set):
+        r.errors.append("faults: N1+N2는 클라이언트 root qdisc 충돌로 함께 주입할 수 없음")
+    if id_set.intersection({"D1", "D2", "D3"}) and "D4" in id_set:
+        r.errors.append("faults: D1/D2/D3+D4는 DNS 응답 조건이 충돌해 함께 주입할 수 없음")
+    if len(ids) > 1 and id_set.intersection({"B1", "B2"}):
+        r.errors.append("faults: B1/B2를 포함한 복수 장애는 지원하지 않음")
+    path_faults = {"N1", "N2", "N3", "N4"}
+    if id_set.intersection({"N3", "N4"}) and id_set - path_faults:
+        r.errors.append("faults: N3/N4와 비경로 장애 조합은 지원하지 않음")
 
     known: list[Fault] = []
     for spec in scenario.faults:

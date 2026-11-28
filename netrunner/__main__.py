@@ -22,7 +22,7 @@ from .diagnoser import Diagnoser, GlmDiagnoser, ReplayDiagnoser
 from .docker_lab import DockerLab
 from .glm_baseline import GlmBaselineDiagnoser
 from .glm_client import DEFAULT_MODEL, OpencodeComplete
-from .lab import Lab, MockLab, ReplayRunner
+from .lab import Lab, MockLab, ReplayRunner, order_faults_for_injection
 from .records import default_runs_dir, ensure_private_dir, open_private, write_private_text
 from .referee import Referee, feedback_for
 from .report import (
@@ -245,23 +245,11 @@ def cmd_lab_check(args) -> int:
     scenarios = [Scenario.from_dict(read_json(p)) for p in files]
     for scenario in scenarios:
         result = validate(scenario, info)
-        ids = {fault.id for fault in scenario.faults}
         reasons = []
         if not result.ok:
             reasons.extend(result.errors)
         if len(scenario.faults) > 1 and scenario.origin != "fixed":
             reasons.append("복수 장애 lab-check은 origin=fixed인 시나리오만 지원")
-        if len(scenario.faults) > 1 and ids.intersection({"B1", "B2"}):
-            reasons.append("B1/B2를 포함한 복수 장애는 lab-check에서 지원하지 않음")
-        if {"N1", "N2"}.issubset(ids):
-            reasons.append("N1+N2는 클라이언트 root qdisc 충돌로 함께 주입할 수 없음")
-        if ids.intersection({"D1", "D2", "D3"}) and "D4" in ids:
-            reasons.append("D1/D2/D3+D4는 DNS 응답 조건이 충돌해 lab-check에서 지원하지 않음")
-        path_faults = {"N1", "N2", "N3", "N4"}
-        if ids.intersection({"N3", "N4"}) and ids - path_faults:
-            reasons.append(
-                "N3/N4와 비경로 장애 조합은 단일 장애 검증의 HTTP 전제와 충돌해 지원하지 않음"
-            )
         if reasons:
             print(
                 f"{scenario.scenario_id}: 시나리오 오류 {reasons}",
@@ -274,7 +262,6 @@ def cmd_lab_check(args) -> int:
     for _ in range(args.repeat):
         for scenario in scenarios:
             steps = {}
-            observable = _lab_check_observability(scenario, info)
             try:
                 initial = lab.health_check(scenario.target_url)
                 if not initial.ok:
@@ -292,11 +279,7 @@ def cmd_lab_check(args) -> int:
                             steps["verify_symptom"] = asdict(lab.verify_symptom(scenario))
                     else:
                         injections = []
-                        ordered_faults = sorted(
-                            scenario.faults,
-                            key=lambda fault: fault.id in {"T1", "T2"},
-                        )
-                        for fault in ordered_faults:
+                        for fault in order_faults_for_injection(scenario.faults):
                             result = lab.inject(fault)
                             injections.append({"fault_id": fault.id, **asdict(result)})
                             if not result.ok:
@@ -305,9 +288,7 @@ def cmd_lab_check(args) -> int:
                         if len(injections) == len(scenario.faults) and all(
                             result["ok"] for result in injections
                         ):
-                            steps["verify_symptom"] = asdict(
-                                lab.verify_lab_combo(scenario, observable)
-                            )
+                            steps["verify_symptom"] = asdict(lab.verify_symptom(scenario))
             finally:
                 steps["reset"] = asdict(lab.reset())
                 steps["health_check_after"] = asdict(lab.health_check(scenario.target_url))
@@ -338,18 +319,6 @@ def cmd_lab_check(args) -> int:
                 return 1
     print(f"기록: {path}")
     return 0
-
-
-def _lab_check_observability(scenario: Scenario, info: LabInfo) -> dict[str, bool]:
-    """lab-check용 가시성. HTTPS TLS 오류도 뒤 HTTP 오류를 가리는 것으로 본다."""
-    base = validate(scenario, info).observable
-    ids = {item.id for item in scenario.faults}
-    visible = {item.id: base[index] for index, item in enumerate(scenario.faults)}
-    if ids.intersection({"S1", "S2"}):
-        for fault_id in ("H1", "H2"):
-            if fault_id in visible:
-                visible[fault_id] = False
-    return visible
 
 
 def format_proposal_summary(
