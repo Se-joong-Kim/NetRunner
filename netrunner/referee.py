@@ -27,7 +27,7 @@ from .contracts import (
     Status,
 )
 from .diagnoser import Diagnoser
-from .lab import Lab, ProbeRunner
+from .lab import Lab, ProbeRunner, order_faults_for_injection
 from .records import ensure_private_dir, open_private
 from .scoring import score
 from .toolbox import Toolbox
@@ -122,7 +122,7 @@ class Referee:
                     return end(Status.INVALID, "라운드 시작 전 실험망이 정상이 아님")
 
             # 3. 주입과 재현 확인
-            for f in scenario.faults:
+            for f in order_faults_for_injection(scenario.faults):
                 if not step(f"inject:{f.id}", self.lab.inject, f):
                     return end(Status.INVALID, f"{f.id} 주입 실패")
             if not step("verify_symptom", self.lab.verify_symptom, scenario):

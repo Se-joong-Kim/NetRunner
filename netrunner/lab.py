@@ -1,7 +1,7 @@
 """심판 ↔ 실험망 경계.
 
 실제 구현(Docker 실험망의 주입·해제)은 실험망 담당이 Lab을 만족하도록
-만든다. 심판은 아래 네 함수만 호출한다. 재현 실패는 무효 라운드로
+만든다. 심판은 아래 함수만 호출한다. 재현 실패는 무효 라운드로
 기록한다.
 """
 
@@ -12,8 +12,13 @@ from typing import Protocol
 from .contracts import FaultSpec, LabResult, Probe, ProbeResult, Scenario
 
 
+def order_faults_for_injection(faults: list[FaultSpec]) -> list[FaultSpec]:
+    """T1/T2는 다른 장애 주입 뒤에 적용해 실험망 설정을 덮어쓰지 않게 한다."""
+    return sorted(faults, key=lambda fault: fault.id in {"T1", "T2"})
+
+
 class Lab(Protocol):
-    """실험망이 따를 형태. 주입·확인·초기화 함수 네 개."""
+    """실험망이 따를 형태. 주입·확인·초기화와 검사 함수."""
 
     def health_check(self, target_url: str) -> LabResult:
         """클라이언트 컨테이너에서 대상 URL에 정상 접속되는지 확인한다."""
@@ -22,7 +27,7 @@ class Lab(Protocol):
         """장애 하나를 심는다. observations에 실제로 적용한 명령·설정을 남긴다."""
 
     def verify_symptom(self, scenario: Scenario) -> LabResult:
-        """심은 뒤 클라이언트에서 증상(접속 실패, 지연 등)이 실제로 나타나는지 확인한다."""
+        """심은 뒤 클라이언트에서 장애별 증상이 실제로 나타나는지 확인한다."""
 
     def reset(self) -> LabResult:
         """모든 규칙을 지우고 서버 설정을 원래대로 되돌린다."""
