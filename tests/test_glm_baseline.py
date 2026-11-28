@@ -6,7 +6,15 @@ from unittest.mock import Mock
 import pytest
 
 from netrunner.breaker import CompletionError
-from netrunner.contracts import ContractError, Finding, Limits, ProbeResult, RoundBrief, Scenario
+from netrunner.contracts import (
+    BaselineBrief,
+    ContractError,
+    Finding,
+    Limits,
+    ProbeResult,
+    RoundBrief,
+    Scenario,
+)
 from netrunner.glm_baseline import GlmBaselineDiagnoser
 from netrunner.glm_client import OpencodeComplete
 from netrunner.lab import MockLab
@@ -133,6 +141,23 @@ def test_baseline_distinguishes_no_findings_from_empty_model_text():
     assert diagnoser.diagnose(brief, Mock()).findings == []
     with pytest.raises(CompletionError, match="모델 응답이 비어 있음"):
         diagnoser.diagnose(brief, Mock())
+
+
+@pytest.mark.parametrize(
+    ("curl_error", "symptom"),
+    [(None, "DNS 조회 결과에 NXDOMAIN이 표시돼요."), ("HTTP 502", "사이트 접속이 안 돼요.")],
+)
+def test_baseline_prompt_handles_ambiguity_without_requiring_a_curl_error(curl_error, symptom):
+    diagnoser, model = baseline_with_responses({"findings": []})
+    brief = BaselineBrief("r1", TARGET, symptom, curl_error=curl_error)
+
+    diagnoser.diagnose(brief, Mock())
+
+    prompt = model.call_args.kwargs["input"]
+    assert "특정 원인을 추측하지 않는다" in prompt
+    assert "증상 자체에 뚜렷한 단서가 있으면 사용한다" in prompt
+    assert "구분할 수 없으면" in prompt
+    assert json.loads(prompt.splitlines()[-1]).get("curl_error") == curl_error
 
 
 @pytest.mark.parametrize("limits", [Limits(max_llm_calls=0), Limits(max_seconds=0)])

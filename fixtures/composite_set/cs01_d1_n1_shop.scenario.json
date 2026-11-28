@@ -1,0 +1,22 @@
+{
+  "scenario_id": "CS01-D1-N1-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "D1",
+      "params": {
+        "domain": "shop.lab"
+      }
+    },
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 300,
+        "jitter_ms": 50
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D1 shop.lab NXDOMAIN, N1 지연"
+}

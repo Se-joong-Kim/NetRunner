@@ -54,7 +54,10 @@ class GlmBaselineDiagnoser:
             '{"findings":[{"stage":"단계 이름","cause":"원인 이름"}]}. '
             "코드 블록과 JSON 바깥의 설명은 생략한다. "
             "단계와 원인은 허용 목록에서 짝을 골라 그대로 쓴다. "
-            '판단할 수 없으면 {"findings":[]}를 반환한다.\n'
+            "curl_error가 없으면 curl에서 제공된 단서가 없다는 뜻이다. "
+            "사이트가 열리지 않거나 느리다는 증상만으로 DNS나 다른 특정 원인을 추측하지 않는다. "
+            "증상 자체에 뚜렷한 단서가 있으면 사용한다. 같은 단서로 여러 원인이 설명되고 "
+            '구분할 수 없으면 {"findings":[]}를 반환한다.\n'
             f"허용된 단계 / 원인 목록\n{_FAULT_LABELS}\n" + json.dumps(data, ensure_ascii=False)
         )
         error = None

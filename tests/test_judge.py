@@ -223,6 +223,45 @@ def test_dns_wrong_ip_masks_later_tcp_fault_but_not_path_fault():
     assert v.observable == [True, False, True]
 
 
+@pytest.mark.parametrize(
+    "faults",
+    [
+        [
+            {"id": "N1", "params": {"delay_ms": 80}},
+            {"id": "N2", "params": {"loss_pct": 10}},
+        ],
+        [
+            {"id": "D1", "params": {"domain": "shop.lab"}},
+            {"id": "D4", "params": {"delay_ms": 500}},
+        ],
+        [
+            {"id": "B1", "params": {"domain": "shop.lab"}},
+            {"id": "H1"},
+        ],
+        [
+            {"id": "N3", "params": {"min_size": 1300}},
+            {"id": "T2", "params": {"port": 80}},
+        ],
+    ],
+)
+def test_lab_unsupported_combinations_are_rejected_by_shared_validation(faults):
+    v = validate(scenario(faults=faults), LAB)
+    assert not v.ok
+    assert any("faults:" in error for error in v.errors)
+
+
+def test_tls_fault_masks_http_fault_regardless_of_scenario_order():
+    v = validate(
+        scenario(
+            target_url="https://shop.lab/",
+            faults=[{"id": "H1"}, {"id": "S1"}],
+        ),
+        LAB,
+    )
+    assert v.ok
+    assert v.observable == [False, True]
+
+
 def test_sni_block_masks_certificate_fault():
     v = validate(
         scenario(
@@ -341,6 +380,41 @@ def test_round_hides_answer_from_diagnoser():
     assert rec["status"] == "scored" and rec["reset_verified"]
     assert set(vars(seen[0])) == {"round_id", "target_url", "complaint", "limits"}
     assert lab.calls[-2:] == ["reset", "health_check"]
+
+
+def test_combo_round_uses_shared_injection_order_and_symptom_verification():
+    sc = {
+        "scenario_id": "combo",
+        "target_url": "http://shop.lab/",
+        "complaint": "사이트가 열리지 않아요.",
+        "faults": [
+            {"id": "T1", "params": {"port": 80}},
+            {"id": "D1", "params": {"domain": "shop.lab"}},
+        ],
+    }
+    rec, lab = run_one(sc=sc)
+    assert rec["status"] == "scored"
+    assert lab.calls[:3] == ["health_check", "inject:D1", "inject:T1"]
+    assert lab.calls[3] == "verify_symptom"
+    assert rec["validation"]["observable"] == [False, True]
+    assert rec["score"]["faults"][0]["verdict"] == "masked"
+
+
+def test_match_scores_supported_multi_fault_scenario():
+    combo = scenario(
+        faults=[
+            {"id": "D1", "params": {"domain": "shop.lab"}},
+            {"id": "N1", "params": {"delay_ms": 80}},
+        ]
+    )
+    records = Referee(
+        MockLab(),
+        ReplayDiagnoser([R2_DIAG]),
+        LAB,
+        runner=ReplayRunner.from_diagnoses([R2_DIAG]),
+    ).run_match(FixedBreaker([combo]), rounds=1)
+    assert [record["status"] for record in records] == ["scored"]
+    assert records[0]["validation"]["observable"] == [True, True]
 
 
 @pytest.mark.parametrize(

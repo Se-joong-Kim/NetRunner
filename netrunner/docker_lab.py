@@ -15,9 +15,10 @@ from urllib.parse import urlsplit
 
 from .child_env import child_environment
 from .contracts import FaultSpec, LabResult, ProbeResult, Scenario, read_json
+from .faults import FAULTS
 from .records import ensure_private_dir
 from .tools import check_args
-from .validate import LabInfo
+from .validate import LabInfo, observability
 
 ROOT = Path(__file__).resolve().parent.parent
 COMPOSE_FILE = ROOT / "compose.yaml"
@@ -38,7 +39,7 @@ def compose_files(windows: bool) -> list[Path]:
 
 
 class DockerLab:
-    """Docker Compose 실험망에서 단일 장애를 주입하고 되돌리는 Lab 구현."""
+    """Docker Compose 실험망에서 장애 조합을 주입·확인하고 되돌리는 Lab 구현."""
 
     # shortcut: 한 실험망은 순차 실행만 지원, 동시 라운드 지원 시 설정과 캡처를 격리한다.
     def __init__(self, config: str | Path = ROOT / "config/lab.json"):
@@ -645,8 +646,19 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
 
     def verify_symptom(self, scenario: Scenario) -> LabResult:
         """DNS 답, 접속 결과, 패킷 캡처로 장애별 증상을 확인한다."""
-        if not self._target(scenario.target_url) or len(scenario.faults) != 1:
-            return LabResult(False, "첫 통합은 허용된 URL의 단일 장애만 지원")
+        if not self._target(scenario.target_url):
+            return LabResult(False, "실험망에서 허용하지 않는 URL")
+        if not scenario.faults:
+            return LabResult(False, "확인할 장애가 없음")
+        if len(scenario.faults) > 1:
+            faults = [FAULTS.get(spec.id) for spec in scenario.faults]
+            if any(fault is None for fault in faults):
+                return LabResult(False, "지원하지 않는 장애")
+            observable = observability(faults)
+            return self._verify_combo_symptoms(
+                scenario,
+                {spec.id: seen for spec, seen in zip(scenario.faults, observable, strict=True)},
+            )
         fault = scenario.faults[0]
         if fault.id not in (
             "D1",
@@ -946,8 +958,8 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
         ok = ok and capture["exit_code"] == 0 and capture["packets"] > 0 and Path(path).is_file()
         return LabResult(ok, f"{fault.id} 증상 {'재현' if ok else '확인 실패'}", observations)
 
-    def verify_lab_combo(self, scenario: Scenario, observable: dict[str, bool]) -> LabResult:
-        """lab-check 전용 복수 장애 확인. 심판/Breaker 경로에서는 호출하지 않는다.
+    def _verify_combo_symptoms(self, scenario: Scenario, observable: dict[str, bool]) -> LabResult:
+        """복수 장애의 관측 가능한 증상을 장애별로 확인한다.
 
         가려진 장애는 확인하지 않고 false로 기록한다. N1은 다른 계층 장애의
         DNS/HTTP 결과와 무관하게 고정 웹 IP ping으로 직접 확인한다.

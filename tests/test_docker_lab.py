@@ -7,14 +7,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from netrunner.__main__ import _lab_check_observability, cmd_lab_check
+from netrunner.__main__ import cmd_lab_check
 from netrunner.contracts import FaultSpec, LabResult, Scenario, read_json
 from netrunner.diagnoser import ReplayDiagnoser
 from netrunner.docker_lab import ROOT, DockerLab
 from netrunner.faults import FAULTS
 from netrunner.referee import Referee
 from netrunner.tools import missing_parts
-from netrunner.validate import LabInfo
+from netrunner.validate import LabInfo, validate
 
 
 def test_lab_scripts_keep_lf_line_endings():
@@ -374,7 +374,7 @@ def test_lab_check_recovers_dirty_start(monkeypatch, tmp_path):
     assert not steps["health_check_initial"]["ok"] and steps["health_check"]["ok"]
 
 
-def test_lab_check_combo_observability_handles_path_and_https_masking():
+def test_validate_combo_observability_handles_path_and_https_masking():
     info = LabInfo.load(ROOT / "config/lab.json")
     base = Scenario.from_dict(
         read_json(ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json")
@@ -389,13 +389,13 @@ def test_lab_check_combo_observability_handles_path_and_https_masking():
     ]
     for faults, expected in cases:
         base.faults = faults
-        assert list(_lab_check_observability(base, info).values()) == expected
+        assert validate(base, info).observable == expected
     base.target_url = "https://shop.lab/"
     base.faults = [FaultSpec("H1"), FaultSpec("S1")]
-    assert list(_lab_check_observability(base, info).values()) == [False, True]
+    assert validate(base, info).observable == [False, True]
 
 
-def test_verify_lab_combo_serializes_per_fault_evidence(monkeypatch):
+def test_verify_combo_serializes_per_fault_evidence(monkeypatch):
     lab = DockerLab()
     scenario = Scenario.from_dict(
         read_json(ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json")
@@ -417,7 +417,7 @@ def test_verify_lab_combo_serializes_per_fault_evidence(monkeypatch):
         return LabResult(True, "stub verification", {"fault_id": single.faults[0].id})
 
     monkeypatch.setattr(lab, "verify_symptom", verify)
-    result = lab.verify_lab_combo(scenario, {"N1": True, "H1": True})
+    result = lab._verify_combo_symptoms(scenario, {"N1": True, "H1": True})
     serialized = asdict(result)
     checks = serialized["observations"]["fault_checks"]
 
@@ -449,9 +449,8 @@ def test_lab_check_combo_injects_all_and_records_per_fault(monkeypatch, tmp_path
             self.injected.append(fault.id)
             return LabResult(True)
 
-        def verify_lab_combo(self, scenario, observable):
+        def verify_symptom(self, scenario):
             assert self.injected == ["H1", "T2"]
-            assert observable == {"T2": True, "H1": False}
             return LabResult(True, observations={"fault_checks": {"H1": {"masked": True}}})
 
         def reset(self):
@@ -526,7 +525,7 @@ def test_lab_check_partial_combo_injection_still_resets_and_skips_verification(
             self.events.append(f"inject:{fault.id}")
             return LabResult(fault.id == "H1")
 
-        def verify_lab_combo(self, *args):
+        def verify_symptom(self, *args):
             pytest.fail("verification must not run after partial injection")
 
         def reset(self):
@@ -587,6 +586,30 @@ def test_real_lab_recovers_after_each_fault(filename):
         assert Path(result.observations["pcap"]).is_file()
         assert result.observations["capture"]["packets"] > 0
         assert result.observations["capture"]["output"].startswith("#1 ")
+    finally:
+        assert lab.reset().ok
+        assert lab.health_check(scenario.target_url).ok
+
+
+@pytest.mark.skipif(os.environ.get("NETRUNNER_INTEGRATION") != "1", reason="Docker 실험망 필요")
+def test_real_combo_symptom_checks_each_visible_fault():
+    lab = DockerLab()
+    scenario = Scenario.from_dict(
+        read_json(ROOT / "fixtures/first_integration/r2_tcp_refused.scenario.json")
+    )
+    scenario.faults = [
+        FaultSpec("D1", {"domain": "shop.lab"}),
+        FaultSpec("N1", {"delay_ms": 80}),
+    ]
+    try:
+        assert lab.health_check(scenario.target_url).ok
+        for fault in scenario.faults:
+            assert lab.inject(fault).ok
+        result = lab.verify_symptom(scenario)
+        assert result.ok, result.observations
+        checks = result.observations["fault_checks"]
+        assert checks["D1"]["observable"] and checks["D1"]["verified"]
+        assert checks["N1"]["observable"] and checks["N1"]["verified"]
     finally:
         assert lab.reset().ok
         assert lab.health_check(scenario.target_url).ok

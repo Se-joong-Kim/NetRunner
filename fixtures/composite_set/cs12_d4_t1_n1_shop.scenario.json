@@ -1,0 +1,29 @@
+{
+  "scenario_id": "CS12-D4-T1-N1-SHOP",
+  "target_url": "http://shop.lab/",
+  "faults": [
+    {
+      "id": "D4",
+      "params": {
+        "domain": "shop.lab",
+        "delay_ms": 1000
+      }
+    },
+    {
+      "id": "T1",
+      "params": {
+        "port": 80
+      }
+    },
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 300,
+        "jitter_ms": 50
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D4 shop.lab DNS 지연, T1 80번 포트 무응답, N1 지연"
+}

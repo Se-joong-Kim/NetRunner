@@ -48,13 +48,13 @@ python -m pytest tests                          # 심판 테스트
 
 ## 2. 심판 ↔ 실험망: `Lab` 인터페이스
 
-`netrunner/lab.py`의 `Lab`을 만족하는 `netrunner/docker_lab.py`의 `DockerLab`은 아래 "장애 목록"의 16종을 단일 장애로 지원한다(#63). 별도 `lab-check` 경로에서 고정 시나리오의 2~3개 조합 장애를 검사할 수 있다(#102). 심판의 `Lab` 인터페이스에는 변화가 없다. `MockLab`은 모의 실행에 사용한다.
+`netrunner/lab.py`의 `Lab`을 만족하는 `netrunner/docker_lab.py`의 `DockerLab`은 아래 "장애 목록"의 16종을 단일 장애와 지원되는 2~3개 조합으로 확인한다(#63, #106). `run`·`match`·`lab-check`는 공통 검증과 주입 순서를 사용한다. 가려진 증상은 `validation.observable`에 맞춰 장애별 확인 결과에 `masked`로 기록한다. `MockLab`은 모의 실행에 사용한다.
 
 | 함수 | 하는 일 | 반환 |
 |---|---|---|
 | `health_check(target_url)` | 클라이언트 컨테이너에서 대상 URL로 정상 접속되는지 확인 | `LabResult` |
 | `inject(fault)` | 장애 하나 주입. `observations`에 실제로 실행한 명령을 남긴다 | `LabResult` |
-| `verify_symptom(scenario)` | 주입 후 클라이언트에서 증상이 나타나는지 확인 | `LabResult` (`ok=True`면 재현됨) |
+| `verify_symptom(scenario)` | 주입 후 클라이언트에서 장애별 증상이 나타나는지 확인. 복수 장애는 관측 가능한 증상을 각각 검사 | `LabResult` (`ok=True`면 모든 관측 가능 장애가 재현됨) |
 | `reset()` | 모든 규칙을 지우고 서버 설정을 원래대로 되돌림 | `LabResult` |
 
 `LabResult`는 `{"ok": bool, "detail": str, "observations": {...}}` 형태이며, 측정값과 캡처 파일 경로는 `observations`에 넣는다.

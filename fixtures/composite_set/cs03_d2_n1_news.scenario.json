@@ -1,0 +1,23 @@
+{
+  "scenario_id": "CS03-D2-N1-NEWS",
+  "target_url": "http://news.lab/",
+  "faults": [
+    {
+      "id": "D2",
+      "params": {
+        "domain": "news.lab",
+        "ip": "10.20.0.201"
+      }
+    },
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 300,
+        "jitter_ms": 50
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D2 news.lab 빈 주소, N1 지연"
+}

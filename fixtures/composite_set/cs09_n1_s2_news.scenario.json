@@ -1,0 +1,22 @@
+{
+  "scenario_id": "CS09-N1-S2-NEWS",
+  "target_url": "https://news.lab/",
+  "faults": [
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 300,
+        "jitter_ms": 50
+      }
+    },
+    {
+      "id": "S2",
+      "params": {
+        "cert_domain": "shop.lab"
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "N1 지연, S2 인증서 도메인 불일치"
+}

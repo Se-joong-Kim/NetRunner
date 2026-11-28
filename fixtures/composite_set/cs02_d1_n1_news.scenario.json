@@ -1,0 +1,22 @@
+{
+  "scenario_id": "CS02-D1-N1-NEWS",
+  "target_url": "http://news.lab/",
+  "faults": [
+    {
+      "id": "D1",
+      "params": {
+        "domain": "news.lab"
+      }
+    },
+    {
+      "id": "N1",
+      "params": {
+        "delay_ms": 300,
+        "jitter_ms": 50
+      }
+    }
+  ],
+  "complaint": "사이트가 열리지 않아요.",
+  "origin": "fixed",
+  "note": "D1 news.lab NXDOMAIN, N1 지연"
+}
