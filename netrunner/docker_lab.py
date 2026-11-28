@@ -215,12 +215,12 @@ class DockerLab:
 
     def _dns(self, server: str, domain: str, timeout: int = 2) -> dict:
         return self._run(
-            "client", "dig", f"+time={timeout}", "+tries=1", "+short", "@" + server, domain, "A"
+            "client", "dig", f"+time={timeout}", "+tries=3", "+short", "@" + server, domain, "A"
         )
 
     def _dns_timed(self, server: str, domain: str) -> dict:
         return self._run(
-            "client", "dig", "+time=5", "+tries=1", "+stats", "@" + server, domain, "A"
+            "client", "dig", "+time=5", "+tries=3", "+stats", "@" + server, domain, "A"
         )
 
     def _start_load(self) -> dict:
@@ -681,7 +681,7 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
         alt_ok = alternate["stdout"].strip() == self.config["web_ip"]
         if fault.id == "D1":
             full_dns = self._run(
-                "client", "dig", "+time=2", "+tries=1", "@" + self.hosts["dns"], domain, "A"
+                "client", "dig", "+time=2", "+tries=3", "@" + self.hosts["dns"], domain, "A"
             )
             observations["full_dns"] = full_dns
             ok = (
@@ -776,6 +776,36 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
             loaded = self._run(
                 "client", "ping", "-c", "20", "-i", "0.05", "-W", "3", self.config["web_ip"]
             )
+            # RTT is dominated by any co-injected N1 delay, so verify N4's bandwidth
+            # cap with the response transfer time (excluding request/first-byte latency).
+            large_transfer = self._run(
+                "client",
+                "curl",
+                "--noproxy",
+                "*",
+                "--max-time",
+                "15",
+                "-sS",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{time_starttransfer} %{time_total} %{size_download}",
+                f"http://{domain}/large",
+            )
+            transfer_values = re.search(
+                r"([\d.]+) ([\d.]+) ([\d.]+)", large_transfer["stdout"].strip()
+            )
+            transfer_ms = (
+                max(0.0, float(transfer_values.group(2)) - float(transfer_values.group(1))) * 1000
+                if transfer_values
+                else None
+            )
+            transfer_bytes = float(transfer_values.group(3)) if transfer_values else None
+            expected_transfer_ms = (
+                transfer_bytes * 8 / fault.params["rate_kbit"]
+                if transfer_bytes is not None
+                else None
+            )
             baseline_rtts = [
                 float(v) for v in re.findall(r"time[=<](\d+(?:\.\d+)?)\s*ms", baseline["stdout"])
             ]
@@ -796,6 +826,9 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
             observations.update(
                 baseline_ping=baseline,
                 loaded_ping=loaded,
+                loaded_transfer=large_transfer,
+                loaded_transfer_ms=transfer_ms,
+                expected_transfer_ms=expected_transfer_ms,
                 baseline_p95_ms=baseline_p95,
                 loaded_p95_ms=loaded_p95,
                 load_stop=load_stop,
@@ -813,7 +846,12 @@ tc qdisc add dev "$dev" root handle 30: tbf rate "${2}kbit" \
                 and baseline_p95 is not None
                 and loaded_p95 is not None
                 and len(loaded_rtts) >= 10
-                and loaded_p95 >= max(10, baseline_p95 * 3)
+                and large_transfer["exit_code"] == 0
+                and transfer_ms is not None
+                and expected_transfer_ms is not None
+                and transfer_bytes is not None
+                and transfer_bytes > 0
+                and transfer_ms >= expected_transfer_ms * 0.5
             )
         elif fault.id == "D3":
             direct = self._curl(
